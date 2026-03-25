@@ -87,10 +87,22 @@ def get_diff_type(msg):
     return ';'.join(types)
 
 def read_file(file):
-    if file.name.endswith('.csv'):
-        return pd.read_csv(file, encoding='utf-8-sig')
-    else:
-        return pd.read_excel(file)
+    """根据文件内容自动识别格式，兼容 .xlsx、.xls、.csv"""
+    if file is None:
+        return None
+    try:
+        if file.name.endswith('.csv'):
+            return pd.read_csv(file, encoding='utf-8-sig')
+        elif file.name.endswith('.xls'):
+            return pd.read_excel(file, engine='xlrd')
+        else:
+            return pd.read_excel(file, engine='openpyxl')
+    except Exception as e:
+        try:
+            return pd.read_excel(file)
+        except:
+            file.seek(0)
+            return pd.read_csv(file, encoding='utf-8-sig')
 
 def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
     """核心对账处理逻辑"""
@@ -143,13 +155,11 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
     else:
         unmatched_cancel = pd.DataFrame()
 
-    # 正负抵消
+    # ========== 正负抵消（修正：按LRP单号+物料+工厂+库位分组） ==========
     if not unmatched_out.empty:
-        out_agg = unmatched_out.groupby(COL_ORDER_WMS).agg(
+        # 按 LRP单号 + 物料 + 工厂 + 库位 分组，避免不同物料合并
+        out_agg = unmatched_out.groupby([COL_ORDER_WMS, COL_MATERIAL_WMS, COL_PLANT_WMS, COL_STORAGE_WMS]).agg(
             out_qty=(COL_QTY_WMS, 'sum'),
-            material=(COL_MATERIAL_WMS, 'first'),
-            plant=(COL_PLANT_WMS, 'first'),
-            storage=(COL_STORAGE_WMS, 'first'),
             common_no=(COL_COMMON_NO, 'first')
         ).reset_index()
         out_agg.rename(columns={COL_ORDER_WMS: 'lrp_order'}, inplace=True)
@@ -165,18 +175,16 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
 
     net_records = pd.DataFrame()
     if not out_agg.empty and not cancel_agg.empty:
+        # 通过 common_no 关联取消出库
         combined = pd.merge(out_agg, cancel_agg, left_on='common_no', right_on=COL_COMMON_NO, how='outer').fillna(0)
         combined['净数量'] = combined['out_qty'] - combined['cancel_qty']
         combined = combined[combined['净数量'] > 0]
         
         if not combined.empty:
-            net_records = combined[['lrp_order', '净数量', 'material', 'plant', 'storage']].copy()
+            net_records = combined[['lrp_order', '净数量', COL_MATERIAL_WMS, COL_PLANT_WMS, COL_STORAGE_WMS]].copy()
             net_records.rename(columns={
                 '净数量': COL_QTY_WMS,
-                'lrp_order': COL_ORDER_WMS,
-                'material': COL_MATERIAL_WMS,
-                'plant': COL_PLANT_WMS,
-                'storage': COL_STORAGE_WMS
+                'lrp_order': COL_ORDER_WMS
             }, inplace=True)
             net_records['记录类型'] = '出库'
 
@@ -192,6 +200,7 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
                                            '出库数量', '收货数量'])
         df_wms_marked = pd.DataFrame()
     else:
+        # 按LRP单号+物料+工厂+库位分组汇总
         group_cols = [COL_MATERIAL_WMS, COL_PLANT_WMS, COL_STORAGE_WMS, COL_ORDER_WMS]
         lrp_summary_list = []
         
@@ -214,6 +223,7 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
         else:
             lrp_summary = pd.DataFrame()
         
+        # 匹配销售报表
         if not lrp_summary.empty and df_sales is not None and not df_sales.empty:
             if COL_ORDER_SALES in df_sales.columns and COL_MSG_SALES in df_sales.columns:
                 df_sales[COL_ORDER_SALES] = df_sales[COL_ORDER_SALES].astype(str).apply(clean_str)
@@ -235,6 +245,7 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
         if not lrp_summary.empty:
             lrp_summary['差异类型'] = lrp_summary['返回消息'].apply(get_diff_type)
         
+        # 按物料工厂库位分组汇总
         summary_list = []
         if not lrp_summary.empty:
             for (material, plant, storage), group in lrp_summary.groupby([COL_MATERIAL_WMS, COL_PLANT_WMS, COL_STORAGE_WMS]):
