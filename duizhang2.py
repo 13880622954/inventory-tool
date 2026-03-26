@@ -572,7 +572,7 @@ def inventory_matching():
     
     with col1:
         ib00_file = st.file_uploader("上传 IB00库存表", type=['xlsx', 'xls', 'csv'], key="ib00")
-        st.caption("需要包含：存储位置、非限制使用库存、冻结库存等列")
+        st.caption("需要包含：存储位置、非限制使用的库存、冻结库存等列")
     
     with col2:
         location_file = st.file_uploader("上传 库位表", type=['xlsx', 'xls', 'csv'], key="location")
@@ -583,7 +583,7 @@ def inventory_matching():
         st.info("请根据您的实际Excel列名修改以下配置")
         
         col_storage = st.text_input("存储位置列名", value="存储位置")
-        col_unrestricted = st.text_input("非限制使用库存列名", value="非限制使用库存")
+        col_unrestricted = st.text_input("非限制使用的库存列名", value="非限制使用的库存")
         col_frozen = st.text_input("冻结库存列名", value="冻结库存")
         col_loc_code = st.text_input("库位代码列名", value="库位代码")
         col_loc_desc = st.text_input("仓库描述列名", value="仓库描述")
