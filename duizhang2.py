@@ -727,4 +727,168 @@ def inventory_matching():
                     st.exception(e)
 
 
-#
+# ========== 主界面：侧边栏导航 ==========
+st.sidebar.title("📁 功能目录")
+page = st.sidebar.radio(
+    "请选择功能",
+    ["库存对账工具", "库存查询", "核对盘存问题", "汇总盘点表", "盘点表基础数据制作", "IB00库存匹配"]
+)
+
+# ========== 根据用户选择渲染不同页面 ==========
+if page == "库存对账工具":
+    # ------------------- 原对账功能 -------------------
+    st.title("📊 库存对账工具")
+    st.markdown("请上传需要对账的文件，点击开始对账")
+
+    with st.sidebar:
+        st.header("⚙️ 配置选项")
+        skip_rdc = st.checkbox("跳过 RDC 仓库匹配", value=False)
+        st.markdown("---")
+        st.markdown("### 📁 文件上传说明")
+        st.info("支持 .xlsx、.xls、.csv 格式，每个文件限 200MB")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("📂 源文件")
+        wms_file = st.file_uploader("WMS 交易记录", type=['xlsx', 'xls', 'csv'], key="wms")
+        r3_file = st.file_uploader("R3 交易记录", type=['xlsx', 'xls', 'csv'], key="r3")
+        sales_file = st.file_uploader("销售下单异常报表 (可选)", type=['xlsx', 'xls', 'csv'], key="sales")
+
+    with col2:
+        st.subheader("📊 对比报表")
+        target_file = st.file_uploader("WMS与R3库存差异报表", type=['xlsx', 'xls', 'csv'], key="target")
+        rdc_file = st.file_uploader("RDC 仓库编号 (可选)", type=['xlsx', 'xls', 'csv'], key="rdc")
+
+    if st.button("🚀 开始对账", type="primary", use_container_width=True):
+        if wms_file is None or r3_file is None or target_file is None:
+            st.error("❌ 请至少上传 WMS交易记录、R3交易记录 和 WMS与R3库存差异报表 三个文件")
+        else:
+            gc.collect()
+            with st.spinner("⏳ 正在处理数据，请稍候..."):
+                try:
+                    df_wms = read_file(wms_file)
+                    df_r3 = read_file(r3_file)
+                    df_target = read_file(target_file)
+                    df_sales = read_file(sales_file) if sales_file else None
+                    df_rdc = read_file(rdc_file) if rdc_file else None
+
+                    st.info(f"✅ 读取成功: WMS {len(df_wms)} 行, R3 {len(df_r3)} 行, 目标报表 {len(df_target)} 行")
+
+                    df_wms_marked, df_summary, df_result = process_data(
+                        df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc
+                    )
+
+                    del df_wms, df_r3, df_target
+                    gc.collect()
+
+                    if df_result is None:
+                        st.warning("⚠️ 处理完成，但目标报表为空或处理失败")
+                    else:
+                        st.session_state['last_reconciliation_result'] = df_result
+                        st.session_state['last_summary'] = df_summary
+                        st.session_state['last_wms_marked'] = df_wms_marked
+
+                        st.success("🎉 对账完成！")
+
+                        st.subheader("📋 对账结果预览")
+                        tab1, tab2, tab3 = st.tabs(["📄 未匹配汇总", "🏷️ 带标记的WMS表", "📈 最终差异报表"])
+
+                        with tab1:
+                            if df_summary is not None and not df_summary.empty:
+                                st.dataframe(df_summary.head(20), use_container_width=True)
+                                st.caption(f"共 {len(df_summary)} 行")
+                            else:
+                                st.info("无未匹配记录")
+
+                        with tab2:
+                            if df_wms_marked is not None and not df_wms_marked.empty:
+                                st.dataframe(df_wms_marked.head(20), use_container_width=True)
+                                st.caption(f"共 {len(df_wms_marked)} 行")
+                            else:
+                                st.info("无数据")
+
+                        with tab3:
+                            if df_result is not None and not df_result.empty:
+                                st.dataframe(df_result.head(20), use_container_width=True)
+                                st.caption(f"共 {len(df_result)} 行")
+                            else:
+                                st.info("无数据")
+
+                        st.subheader("📥 下载结果")
+                        col_d1, col_d2, col_d3 = st.columns(3)
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+                        with col_d1:
+                            if df_summary is not None and not df_summary.empty:
+                                buffer = io.BytesIO()
+                                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                                    df_summary.to_excel(writer, sheet_name='未匹配汇总', index=False)
+                                st.download_button(
+                                    label="📄 下载未匹配汇总",
+                                    data=buffer.getvalue(),
+                                    file_name=f"未匹配汇总_{timestamp}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                )
+
+                        with col_d2:
+                            if df_wms_marked is not None and not df_wms_marked.empty:
+                                buffer = io.BytesIO()
+                                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                                    df_wms_marked.to_excel(writer, sheet_name='WMS交易记录_带匹配标记', index=False)
+                                st.download_button(
+                                    label="📄 下载带标记WMS表",
+                                    data=buffer.getvalue(),
+                                    file_name=f"WMS交易记录_带匹配标记_{timestamp}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                )
+
+                        with col_d3:
+                            if df_result is not None and not df_result.empty:
+                                buffer = io.BytesIO()
+                                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                                    df_result.to_excel(writer, sheet_name='库存差异报表_带未匹配单号', index=False)
+                                st.download_button(
+                                    label="📄 下载最终差异报表",
+                                    data=buffer.getvalue(),
+                                    file_name=f"库存差异报表_带未匹配单号_{timestamp}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                )
+
+                except Exception as e:
+                    st.error(f"❌ 处理失败: {str(e)}")
+                    st.exception(e)
+
+elif page == "库存查询":
+    inventory_query()
+
+elif page == "核对盘存问题":
+    check_inventory_problems()
+
+elif page == "汇总盘点表":
+    summarize_inventory_sheets()
+
+elif page == "盘点表基础数据制作":
+    create_inventory_sheet()
+
+elif page == "IB00库存匹配":
+    inventory_matching()
+
+
+# ========== 使用说明 ==========
+with st.expander("📖 使用说明", expanded=False):
+    st.markdown("""
+    ### 📋 文件说明
+    | 文件 | 必需 | 说明 |
+    |------|------|------|
+    | WMS交易记录 | ✅ | 包含 LRP单号、单号、货品编码、工厂、ERP库位、数量、进or出、保管员、交易类型 |
+    | R3交易记录 | ✅ | 包含 前继单号、数量 |
+    | WMS与R3库存差异报表 | ✅ | 包含 货品编号、工厂编码、库位编码、WMS和ERP的差异库存、仓库编码 |
+    | 销售下单异常报表 | ❌ | 包含 运单号、返回消息 |
+    | RDC仓库编号 | ❌ | 包含 仓库编号 |
+
+    ### 🚀 操作步骤
+    1. 在侧边栏选择功能
+    2. 对于对账功能，上传所需文件，点击"开始对账"
+    3. 预览结果并下载
+    """)
