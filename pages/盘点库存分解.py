@@ -36,6 +36,9 @@ def process_files(ib00_file, location_file, age_file, template_file):
     df_age = pd.read_excel(age_file, sheet_name=0)
     template_wb = load_workbook(template_file)
 
+    # ---------- 关键修复：确保存储位置列为字符串 ----------
+    df_ib00["存储位置"] = df_ib00["存储位置"].astype(str).str.strip()
+
     # ---------- 1. 匹配仓库描述 ----------
     df_ib00["存储位置_clean"] = df_ib00["存储位置"].astype(str).str.strip()
     df_physical["库位代码_clean"] = df_physical["库位代码"].astype(str).str.strip()
@@ -110,6 +113,9 @@ def process_files(ib00_file, location_file, age_file, template_file):
     for col in age_cols:
         df_merged[col] = df_merged[col].fillna(0).astype(int)
 
+    # 修正：ERP账面数量 = 非限制使用的库存 + 冻结库存
+    df_merged["ERP账面数量"] = df_merged.get("非限制使用的库存", 0).fillna(0) + df_merged.get("冻结库存", 0).fillna(0)
+
     # ---------- 4. 生成盘存分析表 ----------
     warehouses = df_merged["仓库描述"].dropna().unique()
     warehouses = [w for w in warehouses if w != ""]
@@ -169,7 +175,6 @@ def process_files(ib00_file, location_file, age_file, template_file):
                 if val is not None:
                     cell.value = val
 
-        # 获取各列号
         actual_col = adj_col = diff_col = erp_col = in_col = out_col = None
         age_col_nums = []
         age_col_names = ["3个月库龄", "4-6个月库龄", "7-12个月库龄", "1-2年库龄", "2-3年库龄", "3年以上库龄", "10年以上库龄"]
@@ -263,14 +268,7 @@ def process_files(ib00_file, location_file, age_file, template_file):
                         elif col_name == "单位":
                             val = row.get("单位", "")
                         elif col_name == "ERP账面数量":
-                            # 修改：ERP账面数量 = 非限制使用的库存 + 冻结库存
-                            unrestricted = row.get("非限制使用的库存", 0)
-                            frozen = row.get("冻结库存", 0)
-                            if pd.isna(unrestricted):
-                                unrestricted = 0
-                            if pd.isna(frozen):
-                                frozen = 0
-                            val = unrestricted + frozen
+                            val = row.get("ERP账面数量", 0)
                             total_qty += val
                         elif col_name in ["ERP账面金额", "入库未记数", "出库未记数", "调整后数量", "实盘数量", "盘盈（+）盘亏（-）数量"]:
                             val = ""  # 留空，后期填写
@@ -301,15 +299,12 @@ def process_files(ib00_file, location_file, age_file, template_file):
     # ---------- 5. 生成汇总表（成品/赠品分开） ----------
     df_merged["存储位置"] = df_merged["存储位置"].astype(str).str.strip()
     df_merged["类型"] = df_merged["存储位置"].apply(lambda x: "赠品" if x.endswith("6") else "成品")
-    df_merged["账面数量"] = df_merged["非限制使用的库存"] + df_merged.get("冻结库存", 0)
-
-    summary = df_merged.groupby(["仓库描述", "类型"])["账面数量"].sum().reset_index()
-    summary_pivot = summary.pivot(index="仓库描述", columns="类型", values="账面数量").fillna(0).reset_index()
+    summary = df_merged.groupby(["仓库描述", "类型"])["ERP账面数量"].sum().reset_index()
+    summary_pivot = summary.pivot(index="仓库描述", columns="类型", values="ERP账面数量").fillna(0).reset_index()
     summary_pivot.columns.name = None
     summary_pivot = summary_pivot[["仓库描述", "成品", "赠品"]]
     summary_pivot["总计"] = summary_pivot["成品"] + summary_pivot["赠品"]
     summary_pivot = summary_pivot.sort_values("总计", ascending=False)
-
     total_row = pd.DataFrame([["总计", summary_pivot["成品"].sum(), summary_pivot["赠品"].sum(), summary_pivot["总计"].sum()]],
                              columns=["仓库描述", "成品", "赠品", "总计"])
     summary_pivot = pd.concat([summary_pivot, total_row], ignore_index=True)
@@ -329,7 +324,6 @@ if st.button("🚀 生成盘存分析表"):
         with st.spinner("正在处理，请稍候..."):
             try:
                 output_files = process_files(ib00_file, location_file, age_file, template_file)
-                # 打包成 ZIP
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
                     for filename, data in output_files.items():
