@@ -23,6 +23,8 @@ if 'last_summary' not in st.session_state:
     st.session_state['last_summary'] = None
 if 'last_wms_marked' not in st.session_state:
     st.session_state['last_wms_marked'] = None
+if 'reconciliation_done' not in st.session_state:
+    st.session_state['reconciliation_done'] = False
 
 # ========== 自定义CSS ==========
 st.markdown("""
@@ -353,216 +355,7 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
     return df_wms_marked, df_summary, None
 
 
-# ========== 功能1：库存查询 ==========
-def inventory_query():
-    st.header("🔍 库存查询")
-    st.write("这是一个示例功能，您可以在此添加自定义的库存查询逻辑。")
-    st.info("例如：按物料编码查询库存分布，或连接数据库实时查询。")
-
-    material_code = st.text_input("请输入物料编码")
-    if material_code:
-        st.write(f"您查询的物料编码是：**{material_code}**")
-        st.warning("目前仅展示示例，实际功能可自行开发。")
-
-
-# ========== 功能2：核对盘存问题 ==========
-def check_inventory_problems():
-    st.header("🔍 核对盘存问题")
-    st.write("基于上次对账结果，分析盘点差异是否存在异常。")
-
-    if st.session_state['last_reconciliation_result'] is None:
-        st.warning("⚠️ 请先执行对账功能，生成差异报表后再使用此功能。")
-        st.info("请前往「库存对账工具」页面上传文件并完成对账。")
-        return
-
-    df = st.session_state['last_reconciliation_result']
-    st.subheader("📊 当前差异报表数据概览")
-    st.dataframe(df.head(10), use_container_width=True)
-    st.caption(f"共 {len(df)} 行数据")
-
-    st.subheader("📈 差异分析")
-    diff_col = 'WMS和ERP的差异库存'
-    if diff_col in df.columns:
-        df['差异绝对值'] = df[diff_col].abs()
-        threshold = st.number_input("设置差异绝对值阈值", min_value=0, value=5, step=1)
-        problematic = df[df['差异绝对值'] > threshold]
-        if problematic.empty:
-            st.success(f"✅ 所有行差异绝对值均 ≤ {threshold}，盘点差异在可接受范围内。")
-        else:
-            st.warning(f"⚠️ 共有 {len(problematic)} 行差异绝对值超过 {threshold}，可能存在盘点问题：")
-            st.dataframe(problematic, use_container_width=True)
-    else:
-        st.error(f"列 '{diff_col}' 不存在，请检查目标报表列名是否正确。")
-
-
-# ========== 功能3：汇总所有盘点表 ==========
-def summarize_inventory_sheets():
-    st.header("📚 汇总所有盘点表")
-    st.write("上传多个盘点表文件（Excel/CSV）或一个压缩包（ZIP），系统将自动合并汇总。")
-
-    uploaded_files = st.file_uploader(
-        "选择盘点表文件（可多选，也支持 ZIP 压缩包）",
-        type=['xlsx', 'xls', 'csv', 'zip'],
-        accept_multiple_files=True,
-        key="inventory_sheets"
-    )
-
-    if uploaded_files:
-        all_data = []
-        for file in uploaded_files:
-            if file.name.endswith('.zip'):
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    zip_path = os.path.join(tmpdir, file.name)
-                    with open(zip_path, 'wb') as f:
-                        f.write(file.getbuffer())
-                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                        zip_ref.extractall(tmpdir)
-                    for root, dirs, files in os.walk(tmpdir):
-                        for filename in files:
-                            if filename.endswith(('.xlsx', '.xls', '.csv')):
-                                file_path = os.path.join(root, filename)
-                                try:
-                                    if filename.endswith('.csv'):
-                                        df = pd.read_csv(file_path, encoding='utf-8-sig')
-                                    else:
-                                        df = pd.read_excel(file_path, engine='openpyxl')
-                                    df['来源文件'] = filename
-                                    all_data.append(df)
-                                    st.success(f"✅ 已从压缩包读取 {filename}")
-                                except Exception as e:
-                                    st.error(f"❌ 读取压缩包内文件 {filename} 失败：{e}")
-            else:
-                try:
-                    df = read_file(file)
-                    df['来源文件'] = file.name
-                    all_data.append(df)
-                    st.success(f"✅ 已读取 {file.name}，共 {len(df)} 行")
-                except Exception as e:
-                    st.error(f"❌ 读取 {file.name} 失败：{e}")
-
-        if all_data:
-            combined = pd.concat(all_data, ignore_index=True)
-            st.subheader("📊 合并后的汇总表")
-            st.dataframe(combined.head(20), use_container_width=True)
-            st.caption(f"共 {len(combined)} 行")
-
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                combined.to_excel(writer, sheet_name='盘点汇总', index=False)
-            st.download_button(
-                label="📥 下载汇总表",
-                data=buffer.getvalue(),
-                file_name=f"盘点汇总_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-
-# ========== 功能4：盘点表基础数据制作 ==========
-def create_inventory_sheet():
-    st.header("📝 盘点表基础数据制作")
-    st.write("上传库存基础数据文件，系统将生成带有空白盘点列的盘点表模板，便于线下盘点。")
-
-    uploaded_file = st.file_uploader(
-        "选择库存基础数据文件（Excel/CSV）",
-        type=['xlsx', 'xls', 'csv'],
-        key="inventory_data"
-    )
-
-    if uploaded_file is not None:
-        try:
-            df = read_file(uploaded_file)
-            st.success(f"✅ 成功读取文件，共 {len(df)} 行")
-            st.dataframe(df.head(10), use_container_width=True)
-
-            st.info("请确认文件中包含以下关键列：物料编码、货品名称、库存数量、库位（可选）")
-            
-            columns = df.columns.tolist()
-            material_col = st.selectbox("请选择物料编码列", columns, key="material_col")
-            name_col = st.selectbox("请选择货品名称列", columns, key="name_col")
-            qty_col = st.selectbox("请选择库存数量列", columns, key="qty_col")
-            location_col = st.selectbox("请选择库位列（可选，若无则选无）", ["无"] + columns, key="location_col")
-
-            group_by = st.radio(
-                "分组方式（用于生成多张盘点表）",
-                ["不分组", "按库位分组", "按物料分组"]
-            )
-
-            if st.button("生成盘点表模板", type="primary"):
-                if group_by == "不分组":
-                    sheet_data = df[[material_col, name_col, qty_col]].copy()
-                    sheet_data.rename(columns={
-                        material_col: "物料编码",
-                        name_col: "货品名称",
-                        qty_col: "账面库存"
-                    }, inplace=True)
-                    sheet_data["盘点数量"] = ""
-                    sheet_data["备注"] = ""
-                    
-                    buffer = io.BytesIO()
-                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                        sheet_data.to_excel(writer, sheet_name="盘点表", index=False)
-                    st.download_button(
-                        label="📥 下载盘点表",
-                        data=buffer.getvalue(),
-                        file_name="盘点表_模板.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                    st.success("盘点表模板生成成功！")
-
-                elif group_by == "按库位分组":
-                    if location_col == "无":
-                        st.error("未选择库位列，无法按库位分组。")
-                        return
-                    grouped = df.groupby(location_col)
-                    buffer = io.BytesIO()
-                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                        for loc, group in grouped:
-                            sheet_name = str(loc)[:31]
-                            sheet_data = group[[material_col, name_col, qty_col]].copy()
-                            sheet_data.rename(columns={
-                                material_col: "物料编码",
-                                name_col: "货品名称",
-                                qty_col: "账面库存"
-                            }, inplace=True)
-                            sheet_data["盘点数量"] = ""
-                            sheet_data["备注"] = ""
-                            sheet_data.to_excel(writer, sheet_name=sheet_name, index=False)
-                    st.download_button(
-                        label="📥 下载盘点表（按库位分页）",
-                        data=buffer.getvalue(),
-                        file_name="盘点表_按库位.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                    st.success(f"已生成 {len(grouped)} 个sheet，按库位分组完成。")
-
-                elif group_by == "按物料分组":
-                    grouped = df.groupby(material_col)
-                    buffer = io.BytesIO()
-                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                        for material, group in grouped:
-                            sheet_name = str(material)[:31]
-                            sheet_data = group[[name_col, qty_col]].copy()
-                            sheet_data.rename(columns={
-                                name_col: "货品名称",
-                                qty_col: "账面库存"
-                            }, inplace=True)
-                            sheet_data["盘点数量"] = ""
-                            sheet_data["备注"] = ""
-                            sheet_data.to_excel(writer, sheet_name=sheet_name, index=False)
-                    st.download_button(
-                        label="📥 下载盘点表（按物料分页）",
-                        data=buffer.getvalue(),
-                        file_name="盘点表_按物料.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                    st.success(f"已生成 {len(grouped)} 个sheet，按物料分组完成。")
-
-        except Exception as e:
-            st.error(f"❌ 处理失败: {e}")
-            st.exception(e)
-
-
-# ========== 功能5：IB00库存匹配 ==========
+# ========== IB00库存匹配功能 ==========
 def inventory_matching():
     st.header("📦 IB00工厂库存匹配")
     st.write("上传 IB00库存表 和 库位表，系统将自动匹配并生成盘存汇总表")
@@ -731,12 +524,11 @@ def inventory_matching():
 st.sidebar.title("📁 功能目录")
 page = st.sidebar.radio(
     "请选择功能",
-    ["库存对账工具", "库存查询", "核对盘存问题", "汇总盘点表", "盘点表基础数据制作", "IB00库存匹配"]
+    ["库存对账工具", "IB00库存匹配"]
 )
 
-# ========== 根据用户选择渲染不同页面 ==========
+# ========== 库存对账工具 ==========
 if page == "库存对账工具":
-    # ------------------- 原对账功能 -------------------
     st.title("📊 库存对账工具")
     st.markdown("请上传需要对账的文件，点击开始对账")
 
@@ -760,6 +552,7 @@ if page == "库存对账工具":
         target_file = st.file_uploader("WMS与R3库存差异报表", type=['xlsx', 'xls', 'csv'], key="target")
         rdc_file = st.file_uploader("RDC 仓库编号 (可选)", type=['xlsx', 'xls', 'csv'], key="rdc")
 
+    # 对账按钮
     if st.button("🚀 开始对账", type="primary", use_container_width=True):
         if wms_file is None or r3_file is None or target_file is None:
             st.error("❌ 请至少上传 WMS交易记录、R3交易记录 和 WMS与R3库存差异报表 三个文件")
@@ -785,92 +578,89 @@ if page == "库存对账工具":
                     if df_result is None:
                         st.warning("⚠️ 处理完成，但目标报表为空或处理失败")
                     else:
+                        # 保存结果到 session_state
                         st.session_state['last_reconciliation_result'] = df_result
                         st.session_state['last_summary'] = df_summary
                         st.session_state['last_wms_marked'] = df_wms_marked
+                        st.session_state['reconciliation_done'] = True
 
                         st.success("🎉 对账完成！")
-
-                        st.subheader("📋 对账结果预览")
-                        tab1, tab2, tab3 = st.tabs(["📄 未匹配汇总", "🏷️ 带标记的WMS表", "📈 最终差异报表"])
-
-                        with tab1:
-                            if df_summary is not None and not df_summary.empty:
-                                st.dataframe(df_summary.head(20), use_container_width=True)
-                                st.caption(f"共 {len(df_summary)} 行")
-                            else:
-                                st.info("无未匹配记录")
-
-                        with tab2:
-                            if df_wms_marked is not None and not df_wms_marked.empty:
-                                st.dataframe(df_wms_marked.head(20), use_container_width=True)
-                                st.caption(f"共 {len(df_wms_marked)} 行")
-                            else:
-                                st.info("无数据")
-
-                        with tab3:
-                            if df_result is not None and not df_result.empty:
-                                st.dataframe(df_result.head(20), use_container_width=True)
-                                st.caption(f"共 {len(df_result)} 行")
-                            else:
-                                st.info("无数据")
-
-                        st.subheader("📥 下载结果")
-                        col_d1, col_d2, col_d3 = st.columns(3)
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-                        with col_d1:
-                            if df_summary is not None and not df_summary.empty:
-                                buffer = io.BytesIO()
-                                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                                    df_summary.to_excel(writer, sheet_name='未匹配汇总', index=False)
-                                st.download_button(
-                                    label="📄 下载未匹配汇总",
-                                    data=buffer.getvalue(),
-                                    file_name=f"未匹配汇总_{timestamp}.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                )
-
-                        with col_d2:
-                            if df_wms_marked is not None and not df_wms_marked.empty:
-                                buffer = io.BytesIO()
-                                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                                    df_wms_marked.to_excel(writer, sheet_name='WMS交易记录_带匹配标记', index=False)
-                                st.download_button(
-                                    label="📄 下载带标记WMS表",
-                                    data=buffer.getvalue(),
-                                    file_name=f"WMS交易记录_带匹配标记_{timestamp}.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                )
-
-                        with col_d3:
-                            if df_result is not None and not df_result.empty:
-                                buffer = io.BytesIO()
-                                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                                    df_result.to_excel(writer, sheet_name='库存差异报表_带未匹配单号', index=False)
-                                st.download_button(
-                                    label="📄 下载最终差异报表",
-                                    data=buffer.getvalue(),
-                                    file_name=f"库存差异报表_带未匹配单号_{timestamp}.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                )
 
                 except Exception as e:
                     st.error(f"❌ 处理失败: {str(e)}")
                     st.exception(e)
 
-elif page == "库存查询":
-    inventory_query()
+    # 显示结果（如果已处理）
+    if st.session_state['reconciliation_done']:
+        df_result = st.session_state['last_reconciliation_result']
+        df_summary = st.session_state['last_summary']
+        df_wms_marked = st.session_state['last_wms_marked']
 
-elif page == "核对盘存问题":
-    check_inventory_problems()
+        st.subheader("📋 对账结果预览")
+        tab1, tab2, tab3 = st.tabs(["📄 未匹配汇总", "🏷️ 带标记的WMS表", "📈 最终差异报表"])
 
-elif page == "汇总盘点表":
-    summarize_inventory_sheets()
+        with tab1:
+            if df_summary is not None and not df_summary.empty:
+                st.dataframe(df_summary.head(20), use_container_width=True)
+                st.caption(f"共 {len(df_summary)} 行")
+            else:
+                st.info("无未匹配记录")
 
-elif page == "盘点表基础数据制作":
-    create_inventory_sheet()
+        with tab2:
+            if df_wms_marked is not None and not df_wms_marked.empty:
+                st.dataframe(df_wms_marked.head(20), use_container_width=True)
+                st.caption(f"共 {len(df_wms_marked)} 行")
+            else:
+                st.info("无数据")
 
+        with tab3:
+            if df_result is not None and not df_result.empty:
+                st.dataframe(df_result.head(20), use_container_width=True)
+                st.caption(f"共 {len(df_result)} 行")
+            else:
+                st.info("无数据")
+
+        st.subheader("📥 下载结果")
+        col_d1, col_d2, col_d3 = st.columns(3)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        with col_d1:
+            if df_summary is not None and not df_summary.empty:
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df_summary.to_excel(writer, sheet_name='未匹配汇总', index=False)
+                st.download_button(
+                    label="📄 下载未匹配汇总",
+                    data=buffer.getvalue(),
+                    file_name=f"未匹配汇总_{timestamp}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+        with col_d2:
+            if df_wms_marked is not None and not df_wms_marked.empty:
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df_wms_marked.to_excel(writer, sheet_name='WMS交易记录_带匹配标记', index=False)
+                st.download_button(
+                    label="📄 下载带标记WMS表",
+                    data=buffer.getvalue(),
+                    file_name=f"WMS交易记录_带匹配标记_{timestamp}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+        with col_d3:
+            if df_result is not None and not df_result.empty:
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df_result.to_excel(writer, sheet_name='库存差异报表_带未匹配单号', index=False)
+                st.download_button(
+                    label="📄 下载最终差异报表",
+                    data=buffer.getvalue(),
+                    file_name=f"库存差异报表_带未匹配单号_{timestamp}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+# ========== IB00库存匹配页面 ==========
 elif page == "IB00库存匹配":
     inventory_matching()
 
@@ -878,7 +668,7 @@ elif page == "IB00库存匹配":
 # ========== 使用说明 ==========
 with st.expander("📖 使用说明", expanded=False):
     st.markdown("""
-    ### 📋 文件说明
+    ### 📋 库存对账工具文件说明
     | 文件 | 必需 | 说明 |
     |------|------|------|
     | WMS交易记录 | ✅ | 包含 LRP单号、单号、货品编码、工厂、ERP库位、数量、进or出、保管员、交易类型 |
@@ -891,4 +681,9 @@ with st.expander("📖 使用说明", expanded=False):
     1. 在侧边栏选择功能
     2. 对于对账功能，上传所需文件，点击"开始对账"
     3. 预览结果并下载
+    
+    ### 📦 IB00库存匹配说明
+    1. 上传 IB00库存表（包含存储位置、非限制库存、冻结库存）
+    2. 上传库位表（包含实物库位表和赠品库位表两个工作表）
+    3. 点击"开始匹配"，下载汇总结果
     """)
