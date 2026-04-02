@@ -236,6 +236,18 @@ st.markdown("""
 可选上传“2026年2月美菱IB00工厂盘存数据、账外物资汇总.xlsx”文件，如果上传则进行匹配（用库位代码关联，更新仓库描述）。
 """)
 
+# 初始化 session_state 变量
+if 'processed' not in st.session_state:
+    st.session_state.processed = False
+if 'product_summary' not in st.session_state:
+    st.session_state.product_summary = None
+if 'gift_summary' not in st.session_state:
+    st.session_state.gift_summary = None
+if 'product_output' not in st.session_state:
+    st.session_state.product_output = None
+if 'gift_output' not in st.session_state:
+    st.session_state.gift_output = None
+
 # 侧边栏上传
 st.sidebar.header("1. 上传必需文件")
 location_file = st.sidebar.file_uploader("库位表（Excel，需包含'实物库位表'和'赠品库位表'两个sheet）", type=['xlsx'])
@@ -288,35 +300,47 @@ if st.sidebar.button("开始处理"):
 
         product_summary = summarize_by_warehouse(product_detail)
         gift_summary = summarize_by_warehouse(gift_detail)
-
         product_output = align_to_fixed_columns_with_desc(product_detail, FIXED_COLUMNS, '仓库描述')
         gift_output = align_to_fixed_columns_with_desc(gift_detail, FIXED_COLUMNS, '仓库描述')
 
-        st.subheader("汇总结果")
-        if not product_summary.empty:
-            st.write("**成品按仓库汇总**")
-            st.dataframe(product_summary)
-        if not gift_summary.empty:
-            st.write("**赠品按仓库汇总**")
-            st.dataframe(gift_summary)
-
-        with st.expander("查看明细"):
-            if not product_output.empty:
-                st.write("**成品明细汇总**")
-                st.dataframe(product_output)
-            if not gift_output.empty:
-                st.write("**赠品明细汇总**")
-                st.dataframe(gift_output)
-
-        st.subheader("下载结果")
-        col1, col2 = st.columns(2)
-        if not product_summary.empty:
-            col1.download_button("下载成品汇总 (CSV)", product_summary.to_csv(index=False).encode('utf-8-sig'), "成品汇总.csv", "text/csv")
-        if not gift_summary.empty:
-            col2.download_button("下载赠品汇总 (CSV)", gift_summary.to_csv(index=False).encode('utf-8-sig'), "赠品汇总.csv", "text/csv")
-        if not product_output.empty:
-            col1.download_button("下载成品明细 (CSV)", product_output.to_csv(index=False).encode('utf-8-sig'), "成品明细.csv", "text/csv")
-        if not gift_output.empty:
-            col2.download_button("下载赠品明细 (CSV)", gift_output.to_csv(index=False).encode('utf-8-sig'), "赠品明细.csv", "text/csv")
-
+        # 存入 session_state
+        st.session_state.product_summary = product_summary
+        st.session_state.gift_summary = gift_summary
+        st.session_state.product_output = product_output
+        st.session_state.gift_output = gift_output
+        st.session_state.processed = True
         st.success("处理完成！")
+
+# 如果 session_state 中有数据，则显示结果和下载按钮
+if st.session_state.processed:
+    product_summary = st.session_state.product_summary
+    gift_summary = st.session_state.gift_summary
+    product_output = st.session_state.product_output
+    gift_output = st.session_state.gift_output
+
+    st.subheader("汇总结果")
+    if not product_summary.empty:
+        st.write("**成品按仓库汇总**")
+        st.dataframe(product_summary)
+    if not gift_summary.empty:
+        st.write("**赠品按仓库汇总**")
+        st.dataframe(gift_summary)
+
+    with st.expander("查看明细"):
+        if not product_output.empty:
+            st.write("**成品明细汇总**")
+            st.dataframe(product_output)
+        if not gift_output.empty:
+            st.write("**赠品明细汇总**")
+            st.dataframe(gift_output)
+
+    st.subheader("下载结果")
+    col1, col2 = st.columns(2)
+    if not product_summary.empty:
+        col1.download_button("下载成品汇总 (CSV)", product_summary.to_csv(index=False).encode('utf-8-sig'), "成品汇总.csv", "text/csv")
+    if not gift_summary.empty:
+        col2.download_button("下载赠品汇总 (CSV)", gift_summary.to_csv(index=False).encode('utf-8-sig'), "赠品汇总.csv", "text/csv")
+    if not product_output.empty:
+        col1.download_button("下载成品明细 (CSV)", product_output.to_csv(index=False).encode('utf-8-sig'), "成品明细.csv", "text/csv")
+    if not gift_output.empty:
+        col2.download_button("下载赠品明细 (CSV)", gift_output.to_csv(index=False).encode('utf-8-sig'), "赠品明细.csv", "text/csv")
