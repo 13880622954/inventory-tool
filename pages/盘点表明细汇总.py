@@ -31,9 +31,9 @@ SUM_COLUMNS = [
 
 # ========== 初始化 session_state 缓存 ==========
 if 'cached_files' not in st.session_state:
-    st.session_state.cached_files = []  # 每个元素为 {'name': 文件名, 'data': bytes}
+    st.session_state.cached_files = []
 
-# ========== 辅助函数（与原脚本一致） ==========
+# ========== 辅助函数 ==========
 def clean_str(val):
     if pd.isna(val):
         return ''
@@ -227,7 +227,6 @@ def summarize_by_warehouse(df):
     return result[final_cols]
 
 def update_match_file(match_file_bytes, product_summary, gift_summary):
-    """使用 openpyxl 直接修改匹配文件，保留所有格式"""
     if match_file_bytes is None:
         return None
     try:
@@ -317,9 +316,7 @@ def update_match_file(match_file_bytes, product_summary, gift_summary):
     output.seek(0)
     return output
 
-# ========== 缓存管理函数 ==========
 def add_to_cache(file_bytes, original_filename):
-    """将更新后的文件添加到缓存"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = original_filename.rsplit('.', 1)[0]
     new_name = f"{base_name}_更新_{timestamp}.xlsx"
@@ -334,7 +331,6 @@ def clear_cache():
     st.success("缓存已清空")
 
 def download_all_cache_as_zip():
-    """将所有缓存文件打包成 ZIP 并返回字节流"""
     if not st.session_state.cached_files:
         return None
     zip_buffer = io.BytesIO()
@@ -358,7 +354,6 @@ st.markdown("""
 6. 如需处理多个月份的匹配文件，可每次将更新后的匹配文件“加入缓存”，最后通过侧边栏的“打包下载所有缓存”一次性获取所有月份的更新文件。
 """)
 
-# 侧边栏上传
 with st.sidebar:
     st.header("1. 上传必需文件")
     location_file = st.file_uploader("库位表 (Excel)", type=['xlsx'])
@@ -390,14 +385,12 @@ with st.sidebar:
     else:
         st.info("暂无缓存")
 
-# 主处理逻辑
 if process_btn:
     if not location_file or not inventory_zip:
         st.error("请同时上传库位表和盘点表压缩包")
         st.stop()
 
     with st.spinner("正在处理，请稍候..."):
-        # 1. 读取库位表
         location_bytes = location_file.read()
         product_location_dict = extract_location_dict_from_bytes(location_bytes, SHEET_PHYSICAL)
         gift_location_dict = extract_location_dict_from_bytes(location_bytes, SHEET_GIFT)
@@ -407,7 +400,6 @@ if process_btn:
         st.success(f"实物库位映射: {len(product_location_dict)} 个")
         st.success(f"赠品库位映射: {len(gift_location_dict)} 个")
 
-        # 2. 处理盘点表ZIP
         product_detail, gift_detail = process_inventory_zip(
             inventory_zip.getvalue(), product_location_dict, gift_location_dict
         )
@@ -418,13 +410,11 @@ if process_btn:
             st.error("没有匹配到任何数据，请检查库位表和盘点表文件")
             st.stop()
 
-        # 3. 生成汇总和明细
         product_summary = summarize_by_warehouse(product_detail.copy())
         gift_summary = summarize_by_warehouse(gift_detail.copy())
         product_output = align_to_fixed_columns(product_detail, FIXED_COLUMNS)
         gift_output = align_to_fixed_columns(gift_detail, FIXED_COLUMNS)
 
-        # 4. 显示结果（表格）
         st.subheader("汇总结果")
         col1, col2 = st.columns(2)
         with col1:
@@ -442,7 +432,6 @@ if process_btn:
                 st.write("**赠品明细**")
                 st.dataframe(gift_output)
 
-        # 5. 准备更新后的匹配文件（如果有）
         updated_file = None
         if match_file is not None:
             st.info("正在根据新汇总数据更新匹配文件...")
@@ -452,7 +441,7 @@ if process_btn:
             else:
                 st.warning("匹配文件更新失败，请检查格式")
 
-        # 6. 打包下载所有结果（CSV + 更新后的匹配文件）
+        # 打包下载本次所有结果
         st.subheader("📦 打包下载本次所有结果")
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -466,7 +455,8 @@ if process_btn:
                 zf.writestr("赠品明细.csv", gift_output.to_csv(index=False).encode('utf-8-sig'))
             if updated_file:
                 original_name = match_file.name if match_file else "匹配文件.xlsx"
-                zf.writestr(f"更新_{original_name}", updated_file)
+                # 修复：updated_file 是 BytesIO，需要 getvalue() 获取字节
+                zf.writestr(f"更新_{original_name}", updated_file.getvalue())
         zip_buffer.seek(0)
         st.download_button(
             label="📥 点击下载 ZIP 文件（包含以上所有结果）",
@@ -475,12 +465,11 @@ if process_btn:
             mime="application/zip"
         )
 
-        # 7. 单独提供“加入缓存”按钮（只缓存更新后的匹配文件）
         if updated_file and match_file:
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("➕ 将本次更新后的匹配文件加入缓存"):
-                    add_to_cache(updated_file, match_file.name)
+                    add_to_cache(updated_file.getvalue(), match_file.name)
             with col2:
                 st.info("缓存文件可用于后续一次性下载多个月份的更新结果")
 
