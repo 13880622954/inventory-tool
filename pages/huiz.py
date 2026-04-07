@@ -19,20 +19,21 @@ FIXED_COLUMNS = [
     '实盘数量', '盘盈（+）', '差异原因分析', '实物状态', '是否影响正常销售',
     '产品账实等级是否一致', '3个月库龄', '4-6个月库龄', '7-12个月库龄',
     '1-2年库龄', '2-3年库龄', '3年以上库龄', '10年以上库龄',
-    '计提跌价准备金额', '实物状态是否为裸机', '库位描述'
+    '计提跌价准备金额', '实物状态是否为裸机'
 ]
 
-SUMMARY_COLUMNS = [
-    '仓库描述', 'ERP账面数_汇总', '入库未计数', '出库未记数', '调整后数量', '实盘', '盘盈', '盘亏'
+SUM_COLUMNS = [
+    'ERP账面数量', '入库未记数', '出库未记数', '调整后数量', '实盘数量', '盘盈（+）'
 ]
 
-# ========== 辅助函数 ==========
+# ========== 辅助函数（与原脚本一致） ==========
 def clean_str(val):
     if pd.isna(val):
         return ''
     return str(val).strip()
 
 def extract_location_dict_from_bytes(file_bytes, sheet_name):
+    """从库位表字节流提取映射 {库位代码: 仓库描述}"""
     try:
         df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=sheet_name)
         if COL_LOCATION_CODE not in df.columns:
@@ -51,6 +52,7 @@ def extract_location_dict_from_bytes(file_bytes, sheet_name):
         return {}
 
 def find_two_row_header(df):
+    """找到表头所在的两行"""
     header_bottom_idx = None
     for idx in range(min(50, len(df))):
         row = df.iloc[idx]
@@ -72,6 +74,7 @@ def find_two_row_header(df):
     return header_top_idx, header_bottom_idx, data_start
 
 def combine_two_row_header(df, header_top_idx, header_bottom_idx):
+    """合并两行表头"""
     top_row = [clean_str(v) for v in df.iloc[header_top_idx].values] if header_top_idx is not None else []
     bottom_row = [clean_str(v) for v in df.iloc[header_bottom_idx].values]
     max_len = max(len(top_row), len(bottom_row))
@@ -104,12 +107,10 @@ def combine_two_row_header(df, header_top_idx, header_bottom_idx):
     return unique
 
 def extract_matched_rows_from_bytes(file_bytes, sheet_name, location_dict):
-    """从单个盘点表文件中提取匹配库位的数据，如果 sheet 不存在则返回空 DataFrame"""
+    """从单个盘点表文件中提取匹配库位的数据"""
     try:
-        # 先尝试读取 sheet，如果不存在会抛出异常
         df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=sheet_name, header=None)
-    except Exception as e:
-        # sheet 不存在或其他读取错误，静默返回空 DataFrame
+    except Exception:
         return pd.DataFrame()
     if df is None or df.empty:
         return pd.DataFrame()
@@ -141,294 +142,258 @@ def extract_matched_rows_from_bytes(file_bytes, sheet_name, location_dict):
     df_data['库位代码'] = df_data[location_col].astype(str).str.strip()
     df_data['仓库描述'] = df_data['库位代码'].map(location_dict).fillna('')
     matched = df_data[df_data['仓库描述'] != ''].copy()
+    matched.drop('库位代码', axis=1, inplace=True)
     return matched
 
-def process_uploaded_inventory_zip(zip_bytes, product_location_dict, gift_location_dict):
-    """处理ZIP包，容错处理缺失的 sheet"""
+def process_inventory_zip(zip_bytes, product_location_dict, gift_location_dict):
+    """处理ZIP包，返回成品和赠品明细DataFrame"""
     all_product = []
     all_gift = []
-    file_count = 0
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
         for file_name in z.namelist():
             if file_name.endswith('/') or file_name.startswith('~$'):
                 continue
             if not (file_name.endswith('.xlsx') or file_name.endswith('.xls')):
                 continue
-            file_count += 1
             try:
                 with z.open(file_name) as f:
                     file_bytes = f.read()
-                # 尝试提取成品（如果 sheet 不存在，返回空 DataFrame）
                 product_data = extract_matched_rows_from_bytes(file_bytes, INVENTORY_SHEET_PRODUCT, product_location_dict)
                 if not product_data.empty:
                     all_product.append(product_data)
-                # 尝试提取赠品（如果 sheet 不存在，返回空 DataFrame）
                 gift_data = extract_matched_rows_from_bytes(file_bytes, INVENTORY_SHEET_GIFT, gift_location_dict)
                 if not gift_data.empty:
                     all_gift.append(gift_data)
             except Exception as e:
-                st.warning(f"处理文件 {file_name} 时出错: {e}")
-    st.info(f"共处理 {file_count} 个文件，成品匹配 {len(all_product)} 批次，赠品匹配 {len(all_gift)} 批次")
+                st.warning(f"处理文件 {file_name} 出错: {e}")
     combined_product = pd.concat(all_product, ignore_index=True) if all_product else pd.DataFrame()
     combined_gift = pd.concat(all_gift, ignore_index=True) if all_gift else pd.DataFrame()
     return combined_product, combined_gift
 
-def summarize_by_warehouse(df):
-    """按仓库描述汇总数量字段（用于从明细生成汇总）"""
+def align_to_fixed_columns(df, fixed_cols):
+    """将明细对齐到固定表头"""
     if df.empty:
-        return pd.DataFrame(columns=SUMMARY_COLUMNS)
+        return pd.DataFrame(columns=fixed_cols)
+    num_data_cols = len(df.columns)
+    num_fixed = len(fixed_cols)
+    result = pd.DataFrame(index=df.index, columns=fixed_cols)
+    for i in range(min(num_data_cols, num_fixed)):
+        result.iloc[:, i] = df.iloc[:, i]
+    return result
+
+def summarize_by_warehouse(df):
+    """按仓库描述汇总数值列（与原脚本逻辑一致）"""
+    if df.empty:
+        return pd.DataFrame(columns=['仓库描述', 'ERP账面数_汇总', '入库未计数', '出库未记数', '调整后数量', '实盘', '盘盈', '盘亏'])
     if '仓库描述' not in df.columns:
         return pd.DataFrame()
-    sum_cols = ['ERP账面数量', '入库未记数', '出库未记数', '调整后数量', '实盘数量', '盘盈（+）']
-    for col in sum_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        else:
-            df[col] = 0
-    grouped = df.groupby('仓库描述')[sum_cols].sum().reset_index()
-    rename_map = {
+    # 获取数值列在固定表头中的位置
+    sum_indices = []
+    for col in SUM_COLUMNS:
+        if col in FIXED_COLUMNS:
+            idx = FIXED_COLUMNS.index(col)
+            if idx < len(df.columns):
+                sum_indices.append(idx)
+    # 提取数值并转换类型
+    for idx in sum_indices:
+        col_name = f'col_{idx}'
+        df[col_name] = pd.to_numeric(df.iloc[:, idx], errors='coerce').fillna(0)
+    # 分组聚合
+    grouped = df.groupby('仓库描述')
+    agg_dict = {f'col_{idx}': 'sum' for idx in sum_indices}
+    result = grouped.agg(agg_dict).reset_index()
+    result.rename(columns={'仓库描述': '仓库描述'}, inplace=True)
+    # 重命名为标准列名
+    rename_map = {}
+    for orig, target in zip([f'col_{idx}' for idx in sum_indices], SUM_COLUMNS):
+        rename_map[orig] = target
+    result.rename(columns=rename_map, inplace=True)
+    # 拆分盘盈盘亏
+    if '盘盈（+）' in result.columns:
+        result['盘盈'] = result['盘盈（+）'].apply(lambda x: x if x > 0 else 0)
+        result['盘亏'] = result['盘盈（+）'].apply(lambda x: abs(x) if x < 0 else 0)
+        result.drop('盘盈（+）', axis=1, inplace=True)
+    else:
+        result['盘盈'] = 0
+        result['盘亏'] = 0
+    # 重命名其他列
+    final_rename = {
         'ERP账面数量': 'ERP账面数_汇总',
         '入库未记数': '入库未计数',
         '出库未记数': '出库未记数',
         '调整后数量': '调整后数量',
-        '实盘数量': '实盘',
-        '盘盈（+）': '盘盈_临时'
+        '实盘数量': '实盘'
     }
-    grouped.rename(columns=rename_map, inplace=True)
-    if '盘盈_临时' in grouped.columns:
-        grouped['盘盈'] = grouped['盘盈_临时'].apply(lambda x: x if x > 0 else 0)
-        grouped['盘亏'] = grouped['盘盈_临时'].apply(lambda x: abs(x) if x < 0 else 0)
-        grouped.drop('盘盈_临时', axis=1, inplace=True)
-    else:
-        grouped['盘盈'] = 0
-        grouped['盘亏'] = 0
-    for col in SUMMARY_COLUMNS:
-        if col not in grouped.columns:
-            grouped[col] = 0
-    return grouped[SUMMARY_COLUMNS]
+    for old, new in final_rename.items():
+        if old in result.columns:
+            result.rename(columns={old: new}, inplace=True)
+    final_cols = ['仓库描述', 'ERP账面数_汇总', '入库未计数', '出库未记数', '调整后数量', '实盘', '盘盈', '盘亏']
+    for col in final_cols:
+        if col not in result.columns:
+            result[col] = 0
+    return result[final_cols]
 
-def load_summary_from_match_file(match_file_bytes):
-    """从匹配文件读取成品和赠品汇总数据，支持缺失 sheet"""
-    try:
-        xls = pd.ExcelFile(io.BytesIO(match_file_bytes))
-        sheet_names = xls.sheet_names
-        product_df = None
-        gift_df = None
+def update_match_file(match_file_bytes, product_summary, gift_summary):
+    """读取匹配文件，用新汇总数据更新成品/赠品汇总表，返回更新后的Excel字节流"""
+    if match_file_bytes is None:
+        return None
+    xls = pd.ExcelFile(io.BytesIO(match_file_bytes))
+    sheet_names = xls.sheet_names
+    product_sheet = None
+    gift_sheet = None
+    for sheet in sheet_names:
+        if '成品' in sheet:
+            product_sheet = sheet
+        elif '赠品' in sheet:
+            gift_sheet = sheet
+    if product_sheet is None:
+        st.warning("匹配文件中未找到成品汇总表，将跳过成品更新")
+    if gift_sheet is None:
+        st.warning("匹配文件中未找到赠品汇总表，将跳过赠品更新")
+    
+    # 读取现有数据（保留原有结构，包括表头格式）
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
         for sheet in sheet_names:
-            if '成品' in sheet:
-                product_df = pd.read_excel(io.BytesIO(match_file_bytes), sheet_name=sheet, header=None)
-            elif '赠品' in sheet:
-                gift_df = pd.read_excel(io.BytesIO(match_file_bytes), sheet_name=sheet, header=None)
-        if product_df is None:
-            # 如果没找到成品 sheet，尝试第一个 sheet
-            product_df = pd.read_excel(io.BytesIO(match_file_bytes), sheet_name=0, header=None)
-        if gift_df is None and len(sheet_names) > 1:
-            gift_df = pd.read_excel(io.BytesIO(match_file_bytes), sheet_name=1, header=None)
-
-        def parse_summary_sheet(df):
-            if df is None or df.empty:
-                return pd.DataFrame(columns=SUMMARY_COLUMNS)
-            # 寻找表头行（包含“仓库描述”）
-            header_row_idx = None
-            for idx in range(min(20, len(df))):
-                row = df.iloc[idx].astype(str).str.strip()
-                if any('仓库描述' in cell for cell in row):
-                    header_row_idx = idx
-                    break
-            if header_row_idx is None:
-                return pd.DataFrame()
-            # 重新读取，以该行为表头
-            df_clean = pd.read_excel(io.BytesIO(match_file_bytes), sheet_name=sheet, header=header_row_idx)
-            df_clean = df_clean.dropna(how='all')
-            df_clean = df_clean[~df_clean.iloc[:,0].astype(str).str.contains('合计', na=False)]
-            col_map = {
-                '仓库描述': '仓库描述',
-                'ERP账面数': 'ERP账面数_汇总',
-                '入库未计数': '入库未计数',
-                '出库未记': '出库未记数',
-                '实盘': '实盘',
-                '盘盈': '盘盈',
-                '盘亏': '盘亏'
-            }
-            rename_dict = {}
-            for std, src in col_map.items():
-                if std in df_clean.columns:
-                    rename_dict[std] = src
-                else:
-                    for col in df_clean.columns:
-                        if std in str(col) and std not in rename_dict:
-                            rename_dict[col] = src
+            df_sheet = pd.read_excel(io.BytesIO(match_file_bytes), sheet_name=sheet, header=None)
+            if sheet == product_sheet and not product_summary.empty:
+                # 更新成品汇总表
+                # 原表格式：第一行标题，第二行列名，第三行开始数据
+                if len(df_sheet) >= 2:
+                    headers = df_sheet.iloc[1].values.tolist()
+                    # 寻找仓库描述列索引
+                    warehouse_col_idx = None
+                    for i, h in enumerate(headers):
+                        if '仓库描述' in str(h):
+                            warehouse_col_idx = i
                             break
-            if rename_dict:
-                df_clean = df_clean.rename(columns=rename_dict)
-            for col in SUMMARY_COLUMNS:
-                if col not in df_clean.columns:
-                    df_clean[col] = 0
-            if '调整后数量' not in df_clean.columns:
-                df_clean['调整后数量'] = 0
-            result = df_clean[SUMMARY_COLUMNS]
-            return result
+                    if warehouse_col_idx is not None:
+                        # 更新数据行
+                        for row_idx in range(2, len(df_sheet)):
+                            warehouse = df_sheet.iloc[row_idx, warehouse_col_idx]
+                            if pd.isna(warehouse):
+                                continue
+                            warehouse_str = str(warehouse).strip()
+                            if warehouse_str in product_summary['仓库描述'].values:
+                                new_row = product_summary[product_summary['仓库描述'] == warehouse_str].iloc[0]
+                                # 按列名更新
+                                col_map = {
+                                    'ERP账面数_汇总': 'ERP账面数-仓库数量',
+                                    '入库未计数': '入库未计数',
+                                    '出库未记数': '出库未记数',
+                                    '实盘': '实盘',
+                                    '盘盈': '盘盈',
+                                    '盘亏': '盘亏'
+                                }
+                                for new_col, target_col in col_map.items():
+                                    if target_col in headers:
+                                        col_idx = headers.index(target_col)
+                                        df_sheet.iloc[row_idx, col_idx] = new_row[new_col]
+            # 写入所有sheet
+            df_sheet.to_excel(writer, sheet_name=sheet, index=False, header=False)
+    output.seek(0)
+    return output
 
-        product_summary = parse_summary_sheet(product_df)
-        gift_summary = parse_summary_sheet(gift_df) if gift_df is not None else pd.DataFrame(columns=SUMMARY_COLUMNS)
-        return product_summary, gift_summary
-    except Exception as e:
-        st.error(f"解析匹配文件失败: {e}")
-        return pd.DataFrame(columns=SUMMARY_COLUMNS), pd.DataFrame(columns=SUMMARY_COLUMNS)
-
-def align_to_fixed_columns_with_desc(df, fixed_cols, desc_col_name='仓库描述'):
-    if df.empty:
-        return pd.DataFrame(columns=fixed_cols)
-    if fixed_cols[-1] != '库位描述':
-        raise ValueError("固定表头最后一个元素必须是'库位描述'")
-    num_data_cols = len(df.columns) - 1
-    num_fixed = len(fixed_cols) - 1
-    result = pd.DataFrame(index=df.index, columns=fixed_cols)
-    for i in range(min(num_data_cols, num_fixed)):
-        if i < df.shape[1]:
-            result.iloc[:, i] = df.iloc[:, i]
-    if desc_col_name in df.columns:
-        result['库位描述'] = df[desc_col_name]
-    else:
-        result['库位描述'] = ''
-    return result
-
-# ========== Streamlit 页面 ==========
+# ========== Streamlit 界面 ==========
 st.set_page_config(page_title="盘点表汇总工具", layout="wide")
-st.title("📊 盘点表汇总工具（支持缺失赠品表）")
+st.title("📊 盘点表批量汇总工具")
 
 st.markdown("""
 **使用说明**：
-- **必须上传**：库位表（Excel，包含'实物库位表'和'赠品库位表' sheet）
-- **可选上传**：
-  - 盘点表压缩包（ZIP，内含多个盘点表Excel文件）—— 用于生成明细报表。如果某个文件缺少“赠品” sheet，会自动跳过赠品提取。
-  - 匹配文件（例如：2026年2月美菱IB00工厂盘存数据、账外物资汇总.xlsx）—— 如果上传，则直接使用其中的汇总数据（按仓库描述），否则从盘点表压缩包自动汇总。
-- **输出**：成品/赠品按仓库汇总表（优先从匹配文件读取），以及明细表（如果上传了盘点表压缩包）。
+1. 上传库位表（Excel，包含“实物库位表”和“赠品库位表”两个sheet）。
+2. 上传盘点表压缩包（ZIP，内含多个盘点表Excel文件，文件名模式不限，但内部需有“成品”和“赠品”sheet）。
+3. 可选上传匹配文件（例如“2026年2月美菱IB00工厂盘存数据、账外物资汇总.xlsx”），如果上传，将用新汇总数据更新该文件中的成品/赠品汇总表，并提供下载；不上传则只生成明细和汇总。
+4. 点击“开始处理”，查看结果并下载。
 """)
 
-# 初始化 session_state
-if 'processed' not in st.session_state:
-    st.session_state.processed = False
-if 'product_summary' not in st.session_state:
-    st.session_state.product_summary = None
-if 'gift_summary' not in st.session_state:
-    st.session_state.gift_summary = None
-if 'product_output' not in st.session_state:
-    st.session_state.product_output = None
-if 'gift_output' not in st.session_state:
-    st.session_state.gift_output = None
-
 # 侧边栏上传
-st.sidebar.header("1. 上传必需文件")
-location_file = st.sidebar.file_uploader("库位表（Excel）", type=['xlsx'])
-inventory_zip = st.sidebar.file_uploader("盘点表压缩包（ZIP，可选）", type=['zip'])
-st.sidebar.header("2. 上传匹配文件（可选，优先使用）")
-match_file = st.sidebar.file_uploader("匹配文件（Excel，包含成品/赠品汇总）", type=['xlsx'])
+with st.sidebar:
+    st.header("1. 上传必需文件")
+    location_file = st.file_uploader("库位表 (Excel)", type=['xlsx'])
+    inventory_zip = st.file_uploader("盘点表压缩包 (ZIP)", type=['zip'])
+    st.header("2. 可选匹配文件")
+    match_file = st.file_uploader("匹配文件 (Excel，月份可变)", type=['xlsx'])
 
-if st.sidebar.button("开始处理"):
-    if not location_file:
-        st.error("请先上传库位表文件")
+    process_btn = st.button("开始处理")
+
+if process_btn:
+    if not location_file or not inventory_zip:
+        st.error("请同时上传库位表和盘点表压缩包")
         st.stop()
 
     with st.spinner("正在处理，请稍候..."):
-        # 加载库位映射
+        # 1. 读取库位表
         location_bytes = location_file.read()
         product_location_dict = extract_location_dict_from_bytes(location_bytes, SHEET_PHYSICAL)
         gift_location_dict = extract_location_dict_from_bytes(location_bytes, SHEET_GIFT)
         if not product_location_dict:
-            st.error("实物库位表为空或格式错误，请检查")
+            st.error("实物库位表为空或格式错误")
             st.stop()
         st.success(f"实物库位映射: {len(product_location_dict)} 个")
         st.success(f"赠品库位映射: {len(gift_location_dict)} 个")
 
-        # 处理盘点表压缩包（获取明细）
-        product_detail = pd.DataFrame()
-        gift_detail = pd.DataFrame()
-        if inventory_zip:
-            st.info("正在处理盘点表压缩包...")
-            product_detail, gift_detail = process_uploaded_inventory_zip(
-                inventory_zip.getvalue(), product_location_dict, gift_location_dict
-            )
-            st.write(f"从盘点表提取的成品明细行数: {len(product_detail)}")
-            st.write(f"从盘点表提取的赠品明细行数: {len(gift_detail)}")
-        else:
-            st.info("未上传盘点表压缩包，将只生成汇总（明细为空）")
+        # 2. 处理盘点表ZIP
+        product_detail, gift_detail = process_inventory_zip(
+            inventory_zip.getvalue(), product_location_dict, gift_location_dict
+        )
+        st.write(f"从盘点表提取的成品明细行数: {len(product_detail)}")
+        st.write(f"从盘点表提取的赠品明细行数: {len(gift_detail)}")
 
-        # 处理汇总：优先使用匹配文件
-        product_summary = pd.DataFrame(columns=SUMMARY_COLUMNS)
-        gift_summary = pd.DataFrame(columns=SUMMARY_COLUMNS)
-        if match_file:
-            st.info("检测到匹配文件，正在读取汇总数据...")
-            product_summary, gift_summary = load_summary_from_match_file(match_file.getvalue())
-            if not product_summary.empty:
-                st.success(f"成品汇总从匹配文件加载成功，共 {len(product_summary)} 行")
-                st.dataframe(product_summary.head())
-            else:
-                st.warning("匹配文件中未找到有效的成品汇总数据，将尝试从盘点表生成")
-            if not gift_summary.empty:
-                st.success(f"赠品汇总从匹配文件加载成功，共 {len(gift_summary)} 行")
-                st.dataframe(gift_summary.head())
-            else:
-                st.warning("匹配文件中未找到有效的赠品汇总数据，将尝试从盘点表生成")
-        else:
-            st.info("未上传匹配文件，将根据盘点表自动生成汇总")
+        if product_detail.empty and gift_detail.empty:
+            st.error("没有匹配到任何数据，请检查库位表和盘点表文件")
+            st.stop()
 
-        # 如果没有匹配文件或匹配文件解析失败，则从明细生成汇总
-        if product_summary.empty and not product_detail.empty:
-            product_summary = summarize_by_warehouse(product_detail)
-            st.info("成品汇总已从盘点表明细生成")
-        if gift_summary.empty and not gift_detail.empty:
-            gift_summary = summarize_by_warehouse(gift_detail)
-            st.info("赠品汇总已从盘点表明细生成")
+        # 3. 生成汇总和明细
+        product_summary = summarize_by_warehouse(product_detail.copy())
+        gift_summary = summarize_by_warehouse(gift_detail.copy())
+        product_output = align_to_fixed_columns(product_detail, FIXED_COLUMNS)
+        gift_output = align_to_fixed_columns(gift_detail, FIXED_COLUMNS)
 
-        # 生成明细输出（固定表头）
-        product_output = align_to_fixed_columns_with_desc(product_detail, FIXED_COLUMNS, '仓库描述') if not product_detail.empty else pd.DataFrame()
-        gift_output = align_to_fixed_columns_with_desc(gift_detail, FIXED_COLUMNS, '仓库描述') if not gift_detail.empty else pd.DataFrame()
+        # 4. 显示结果
+        st.subheader("汇总结果")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("**成品按仓库汇总**")
+            st.dataframe(product_summary)
+        with col2:
+            st.write("**赠品按仓库汇总**")
+            st.dataframe(gift_summary)
 
-        # 存储
-        st.session_state.product_summary = product_summary
-        st.session_state.gift_summary = gift_summary
-        st.session_state.product_output = product_output
-        st.session_state.gift_output = gift_output
-        st.session_state.processed = True
-        st.success("处理完成！")
+        with st.expander("查看明细"):
+            if not product_output.empty:
+                st.write("**成品明细**")
+                st.dataframe(product_output)
+            if not gift_output.empty:
+                st.write("**赠品明细**")
+                st.dataframe(gift_output)
 
-# 显示结果
-if st.session_state.processed:
-    product_summary = st.session_state.product_summary
-    gift_summary = st.session_state.gift_summary
-    product_output = st.session_state.product_output
-    gift_output = st.session_state.gift_output
-
-    st.subheader("汇总结果")
-    if not product_summary.empty:
-        st.write("**成品按仓库汇总**")
-        st.dataframe(product_summary)
-    else:
-        st.warning("成品汇总数据为空")
-    if not gift_summary.empty:
-        st.write("**赠品按仓库汇总**")
-        st.dataframe(gift_summary)
-    else:
-        st.warning("赠品汇总数据为空")
-
-    with st.expander("查看明细（来自盘点表）"):
+        # 5. 下载按钮
+        st.subheader("下载结果")
+        # 明细和汇总的CSV下载
+        if not product_summary.empty:
+            st.download_button("下载成品汇总 (CSV)", product_summary.to_csv(index=False).encode('utf-8-sig'), "成品汇总.csv", "text/csv")
+        if not gift_summary.empty:
+            st.download_button("下载赠品汇总 (CSV)", gift_summary.to_csv(index=False).encode('utf-8-sig'), "赠品汇总.csv", "text/csv")
         if not product_output.empty:
-            st.write("**成品明细**")
-            st.dataframe(product_output)
+            st.download_button("下载成品明细 (CSV)", product_output.to_csv(index=False).encode('utf-8-sig'), "成品明细.csv", "text/csv")
         if not gift_output.empty:
-            st.write("**赠品明细**")
-            st.dataframe(gift_output)
-        if product_output.empty and gift_output.empty:
-            st.info("没有明细数据")
+            st.download_button("下载赠品明细 (CSV)", gift_output.to_csv(index=False).encode('utf-8-sig'), "赠品明细.csv", "text/csv")
 
-    st.subheader("下载结果")
-    col1, col2 = st.columns(2)
-    if not product_summary.empty:
-        col1.download_button("下载成品汇总 (CSV)", product_summary.to_csv(index=False).encode('utf-8-sig'), "成品汇总.csv", "text/csv")
-    if not gift_summary.empty:
-        col2.download_button("下载赠品汇总 (CSV)", gift_summary.to_csv(index=False).encode('utf-8-sig'), "赠品汇总.csv", "text/csv")
-    if not product_output.empty:
-        col1.download_button("下载成品明细 (CSV)", product_output.to_csv(index=False).encode('utf-8-sig'), "成品明细.csv", "text/csv")
-    if not gift_output.empty:
-        col2.download_button("下载赠品明细 (CSV)", gift_output.to_csv(index=False).encode('utf-8-sig'), "赠品明细.csv", "text/csv")
+        # 6. 如果上传了匹配文件，则更新并提供下载
+        if match_file is not None:
+            st.info("正在根据新汇总数据更新匹配文件...")
+            updated_file = update_match_file(match_file.getvalue(), product_summary, gift_summary)
+            if updated_file:
+                st.download_button(
+                    "📥 下载更新后的匹配文件 (Excel)",
+                    updated_file,
+                    file_name="匹配文件_已更新.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                st.success("匹配文件已更新，请下载保存")
+            else:
+                st.warning("匹配文件更新失败，请检查文件格式")
+        else:
+            st.info("未上传匹配文件，如需匹配请上传并重新处理")
+
+    st.success("处理完成！")
