@@ -320,7 +320,6 @@ def update_match_file(match_file_bytes, product_summary, gift_summary):
 # ========== 缓存管理函数 ==========
 def add_to_cache(file_bytes, original_filename):
     """将更新后的文件添加到缓存"""
-    # 生成唯一文件名（原文件名 + 时间戳）
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = original_filename.rsplit('.', 1)[0]
     new_name = f"{base_name}_更新_{timestamp}.xlsx"
@@ -334,7 +333,7 @@ def clear_cache():
     st.session_state.cached_files = []
     st.success("缓存已清空")
 
-def download_all_as_zip():
+def download_all_cache_as_zip():
     """将所有缓存文件打包成 ZIP 并返回字节流"""
     if not st.session_state.cached_files:
         return None
@@ -347,16 +346,16 @@ def download_all_as_zip():
 
 # ========== Streamlit 界面 ==========
 st.set_page_config(page_title="盘点表汇总工具", layout="wide")
-st.title("📊 盘点表批量汇总工具（支持多文件缓存）")
+st.title("📊 盘点表批量汇总工具（一键打包下载所有结果）")
 
 st.markdown("""
 **使用说明**：
 1. 上传库位表（Excel，包含“实物库位表”和“赠品库位表”两个sheet）。
 2. 上传盘点表压缩包（ZIP，内含多个盘点表Excel文件）。
 3. 可选上传匹配文件（例如“2026年2月美菱IB00工厂盘存数据、账外物资汇总.xlsx”）。
-4. 点击“开始处理”，会生成更新后的匹配文件，并提供“立即下载”和“加入缓存”两个选项。
-5. 可以重复处理不同月份的匹配文件，每次可将结果加入缓存。
-6. 最后点击“打包下载所有缓存文件”，一次性下载所有缓存的结果。
+4. 点击“开始处理”，会生成汇总和明细结果。
+5. 处理完成后，点击 **“📦 打包下载本次所有结果”** 即可一次性下载所有 CSV 和更新后的匹配文件（如有）。
+6. 如需处理多个月份的匹配文件，可每次将更新后的匹配文件“加入缓存”，最后通过侧边栏的“打包下载所有缓存”一次性获取所有月份的更新文件。
 """)
 
 # 侧边栏上传
@@ -369,28 +368,27 @@ with st.sidebar:
 
     process_btn = st.button("开始处理")
 
-# 显示缓存区
-st.sidebar.header("📦 缓存区")
-if st.sidebar.button("清空缓存"):
-    clear_cache()
-if st.sidebar.button("📥 打包下载全部缓存"):
-    zip_data = download_all_as_zip()
-    if zip_data:
-        st.sidebar.download_button(
-            "点击下载所有缓存文件 (ZIP)",
-            zip_data,
-            file_name="所有更新文件.zip",
-            mime="application/zip"
-        )
-    else:
-        st.sidebar.info("暂无缓存文件")
+    st.header("📦 缓存区（跨月份更新文件）")
+    if st.button("清空缓存"):
+        clear_cache()
+    if st.button("📥 打包下载所有缓存"):
+        zip_data = download_all_cache_as_zip()
+        if zip_data:
+            st.download_button(
+                "点击下载所有缓存文件 (ZIP)",
+                zip_data,
+                file_name="所有月份更新文件.zip",
+                mime="application/zip"
+            )
+        else:
+            st.info("暂无缓存文件")
 
-if st.session_state.cached_files:
-    st.sidebar.write(f"已缓存 {len(st.session_state.cached_files)} 个文件：")
-    for item in st.session_state.cached_files:
-        st.sidebar.text(f"📄 {item['name']}")
-else:
-    st.sidebar.info("暂无缓存")
+    if st.session_state.cached_files:
+        st.write(f"已缓存 {len(st.session_state.cached_files)} 个文件：")
+        for item in st.session_state.cached_files:
+            st.text(f"📄 {item['name']}")
+    else:
+        st.info("暂无缓存")
 
 # 主处理逻辑
 if process_btn:
@@ -426,7 +424,7 @@ if process_btn:
         product_output = align_to_fixed_columns(product_detail, FIXED_COLUMNS)
         gift_output = align_to_fixed_columns(gift_detail, FIXED_COLUMNS)
 
-        # 4. 显示结果
+        # 4. 显示结果（表格）
         st.subheader("汇总结果")
         col1, col2 = st.columns(2)
         with col1:
@@ -444,36 +442,46 @@ if process_btn:
                 st.write("**赠品明细**")
                 st.dataframe(gift_output)
 
-        # 5. 下载按钮（明细和汇总的CSV）
-        st.subheader("下载明细/汇总（CSV）")
-        if not product_summary.empty:
-            st.download_button("下载成品汇总 (CSV)", product_summary.to_csv(index=False).encode('utf-8-sig'), "成品汇总.csv", "text/csv")
-        if not gift_summary.empty:
-            st.download_button("下载赠品汇总 (CSV)", gift_summary.to_csv(index=False).encode('utf-8-sig'), "赠品汇总.csv", "text/csv")
-        if not product_output.empty:
-            st.download_button("下载成品明细 (CSV)", product_output.to_csv(index=False).encode('utf-8-sig'), "成品明细.csv", "text/csv")
-        if not gift_output.empty:
-            st.download_button("下载赠品明细 (CSV)", gift_output.to_csv(index=False).encode('utf-8-sig'), "赠品明细.csv", "text/csv")
-
-        # 6. 如果上传了匹配文件，则更新并提供下载选项
+        # 5. 准备更新后的匹配文件（如果有）
+        updated_file = None
         if match_file is not None:
             st.info("正在根据新汇总数据更新匹配文件...")
             updated_file = update_match_file(match_file.getvalue(), product_summary, gift_summary)
             if updated_file:
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.download_button(
-                        "📥 立即下载更新后的匹配文件",
-                        updated_file,
-                        file_name=f"更新_{match_file.name}",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                with col2:
-                    if st.button("➕ 加入缓存"):
-                        add_to_cache(updated_file, match_file.name)
+                st.success("匹配文件更新成功")
             else:
-                st.warning("匹配文件更新失败，请检查文件格式")
-        else:
-            st.info("未上传匹配文件，如需匹配请上传并重新处理")
+                st.warning("匹配文件更新失败，请检查格式")
+
+        # 6. 打包下载所有结果（CSV + 更新后的匹配文件）
+        st.subheader("📦 打包下载本次所有结果")
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            if not product_summary.empty:
+                zf.writestr("成品汇总.csv", product_summary.to_csv(index=False).encode('utf-8-sig'))
+            if not gift_summary.empty:
+                zf.writestr("赠品汇总.csv", gift_summary.to_csv(index=False).encode('utf-8-sig'))
+            if not product_output.empty:
+                zf.writestr("成品明细.csv", product_output.to_csv(index=False).encode('utf-8-sig'))
+            if not gift_output.empty:
+                zf.writestr("赠品明细.csv", gift_output.to_csv(index=False).encode('utf-8-sig'))
+            if updated_file:
+                original_name = match_file.name if match_file else "匹配文件.xlsx"
+                zf.writestr(f"更新_{original_name}", updated_file)
+        zip_buffer.seek(0)
+        st.download_button(
+            label="📥 点击下载 ZIP 文件（包含以上所有结果）",
+            data=zip_buffer,
+            file_name=f"盘点表汇总结果_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+            mime="application/zip"
+        )
+
+        # 7. 单独提供“加入缓存”按钮（只缓存更新后的匹配文件）
+        if updated_file and match_file:
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("➕ 将本次更新后的匹配文件加入缓存"):
+                    add_to_cache(updated_file, match_file.name)
+            with col2:
+                st.info("缓存文件可用于后续一次性下载多个月份的更新结果")
 
     st.success("本次处理完成！")
