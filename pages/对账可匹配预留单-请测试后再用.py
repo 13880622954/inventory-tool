@@ -84,6 +84,18 @@ def clean_str(val):
         pass
     return s
 
+def normalize_number(s):
+    """去除字符串的前导0，用于匹配预留编号"""
+    s = s.strip()
+    if s == '' or s == '0':
+        return s
+    return s.lstrip('0')
+
+def is_start_with_4(s):
+    """判断字符串是否以'4'开头（用于过滤单号）"""
+    s = str(s).strip()
+    return s.startswith('4')
+
 def clean_float(val):
     try:
         return float(val)
@@ -128,8 +140,8 @@ def get_r3_sets(df_r3):
     inbound_reserve = set()
     if COL_RESERVE_R3 in df_r3.columns:
         reserve_clean = df_r3[COL_RESERVE_R3].astype(str).apply(clean_str)
-        outbound_reserve = set(reserve_clean[df_r3[COL_QTY_R3] < 0])
-        inbound_reserve = set(reserve_clean[df_r3[COL_QTY_R3] > 0])
+        outbound_reserve = set(normalize_number(v) for v in reserve_clean[df_r3[COL_QTY_R3] < 0] if v != '')
+        inbound_reserve = set(normalize_number(v) for v in reserve_clean[df_r3[COL_QTY_R3] > 0] if v != '')
         outbound_reserve.discard('')
         inbound_reserve.discard('')
     
@@ -162,15 +174,16 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
     cancel_records = df_wms[(df_wms[COL_INOUT] == 'OUT') & (df_wms[COL_TRANS_TYPE] == '取消出库')].copy()
     receive_records = df_wms[(df_wms[COL_INOUT] == 'IN') & (df_wms[COL_TRANS_TYPE] == '收货')].copy()
 
-    # 匹配函数（原逻辑，保持不变）
+    # ========== 匹配函数（对单号进行标准化，且排除以4开头的单号） ==========
     def match_outbound(row):
         lrp = row[COL_ORDER_WMS]
         if lrp != '':
             return '是' if lrp in outbound_order else '否'
         else:
             common = row[COL_COMMON_NO]
-            if common != '':
-                return '是' if common in outbound_reserve else '否'
+            if common != '' and not is_start_with_4(common):  # 排除以4开头的单号
+                common_norm = normalize_number(common)
+                return '是' if common_norm in outbound_reserve else '否'
             else:
                 return '否'
 
@@ -180,8 +193,9 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
             return '是' if lrp in inbound_order else '否'
         else:
             common = row[COL_COMMON_NO]
-            if common != '':
-                return '是' if common in inbound_reserve else '否'
+            if common != '' and not is_start_with_4(common):
+                common_norm = normalize_number(common)
+                return '是' if common_norm in inbound_reserve else '否'
             else:
                 return '否'
 
@@ -203,7 +217,7 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
     else:
         unmatched_cancel = pd.DataFrame()
 
-    # 数量调整：LRP单号为空时除以2（原逻辑，保持不变）
+    # ========== 数量调整和有效单号生成（排除以4开头的单号） ==========
     def adjust_qty(row):
         if row[COL_ORDER_WMS] == '':
             return row[COL_QTY_WMS] / 2.0
@@ -212,26 +226,34 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
 
     for df_temp in [unmatched_out, unmatched_receive, unmatched_cancel]:
         if not df_temp.empty:
-            df_temp['有效单号'] = df_temp.apply(
-                lambda row: row[COL_ORDER_WMS] if row[COL_ORDER_WMS] != '' else row[COL_COMMON_NO], axis=1
-            )
+            # 生成有效单号：LRP非空取LRP；LRP为空且单号不以4开头取单号；否则为空（表示无效）
+            def get_effective_order(row):
+                lrp = row[COL_ORDER_WMS]
+                if lrp != '':
+                    return lrp
+                else:
+                    common = row[COL_COMMON_NO]
+                    if common != '' and not is_start_with_4(common):
+                        return common
+                    else:
+                        return ''  # 无效，后续会被过滤
+            df_temp['有效单号'] = df_temp.apply(get_effective_order, axis=1)
+            # 数量调整：仅当LRP为空时除以2
             df_temp['数量_调整'] = df_temp.apply(adjust_qty, axis=1)
+            # 保留原始LRP用于销售匹配
+            df_temp['原始LRP'] = df_temp[COL_ORDER_WMS]
 
-    # ========== 销售报表匹配：仅使用原始LRP单号（如果非空） ==========
-    # 先为每个未匹配记录添加原始LRP列（用于销售匹配）
-    for df_temp in [unmatched_out, unmatched_receive, unmatched_cancel]:
-        if not df_temp.empty:
-            df_temp['原始LRP'] = df_temp[COL_ORDER_WMS]  # 原始LRP单号（可能为空）
-
+    # ========== 销售报表匹配：仅使用原始LRP（非空） ==========
     if df_sales is not None and not df_sales.empty and COL_ORDER_SALES in df_sales.columns and COL_MSG_SALES in df_sales.columns:
         df_sales[COL_ORDER_SALES] = df_sales[COL_ORDER_SALES].astype(str).apply(clean_str)
         df_sales[COL_MSG_SALES] = df_sales[COL_MSG_SALES].astype(str).apply(clean_str)
         df_sales_unique = df_sales.drop_duplicates(subset=[COL_ORDER_SALES], keep='first')
         msg_map = dict(zip(df_sales_unique[COL_ORDER_SALES], df_sales_unique[COL_MSG_SALES]))
-        # 为每条记录添加返回消息（基于原始LRP，若原始LRP为空则消息为空）
+        
         for df_temp in [unmatched_out, unmatched_receive, unmatched_cancel]:
             if not df_temp.empty:
-                df_temp['返回消息'] = df_temp['原始LRP'].map(msg_map).fillna('')
+                # 只有原始LRP非空时才映射
+                df_temp['返回消息'] = df_temp['原始LRP'].apply(lambda x: msg_map.get(x, '') if x != '' else '')
                 df_temp['差异类型'] = df_temp['返回消息'].apply(get_diff_type)
     else:
         for df_temp in [unmatched_out, unmatched_receive, unmatched_cancel]:
@@ -239,11 +261,24 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
                 df_temp['返回消息'] = ''
                 df_temp['差异类型'] = ''
 
-    # 正负抵消（使用有效单号，原逻辑）
+    # ========== 正负抵消：只考虑有效单号非空的记录 ==========
+    # 过滤掉有效单号为空的记录
+    for df_temp in [unmatched_out, unmatched_receive, unmatched_cancel]:
+        if not df_temp.empty:
+            df_temp = df_temp[df_temp['有效单号'] != '']
+            # 注意：这里需要重新赋值，因为上面是副本，直接在循环中修改原DataFrame需要小心，但我们可以用条件过滤后替换原变量
+            # 为避免复杂，我们直接在处理前过滤
+    # 更简洁的方式：在分组前过滤
+    if not unmatched_out.empty:
+        unmatched_out = unmatched_out[unmatched_out['有效单号'] != '']
+    if not unmatched_receive.empty:
+        unmatched_receive = unmatched_receive[unmatched_receive['有效单号'] != '']
+    if not unmatched_cancel.empty:
+        unmatched_cancel = unmatched_cancel[unmatched_cancel['有效单号'] != '']
+
     if not unmatched_out.empty:
         out_agg = unmatched_out.groupby(['有效单号', COL_MATERIAL_WMS, COL_PLANT_WMS, COL_STORAGE_WMS]).agg(
             out_qty=('数量_调整', 'sum'),
-            # 保留返回消息和差异类型（用于后续聚合）
             返回消息_list=('返回消息', lambda x: '\n'.join(sorted(set(x)))),
             差异类型_list=('差异类型', lambda x: ';'.join(sorted(set([v for v in x if v != '']))))
         ).reset_index()
@@ -285,7 +320,7 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
 
     all_unmatched = pd.concat([net_records, receive_for_concat], ignore_index=True)
 
-    # 构建未匹配汇总表
+    # ========== 构建未匹配汇总表 ==========
     if all_unmatched.empty:
         df_summary = pd.DataFrame(columns=[COL_MATERIAL_WMS, COL_PLANT_WMS, COL_STORAGE_WMS,
                                            '未匹配单号列表', '未匹配单号个数', '数量', '返回消息', '差异类型',
@@ -293,7 +328,6 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
         df_wms_marked = pd.DataFrame()
     else:
         group_cols = [COL_MATERIAL_WMS, COL_PLANT_WMS, COL_STORAGE_WMS]
-        # 汇总数量
         agg_qty = all_unmatched.groupby(group_cols + ['记录类型']).agg(
             数量=('数量_调整', 'sum')
         ).reset_index()
@@ -304,14 +338,12 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
             pivot['收货'] = 0
         pivot.rename(columns={'出库': '出库数量', '收货': '收货数量'}, inplace=True)
 
-        # 聚合未匹配单号列表（有效单号）
         order_list_df = all_unmatched.groupby(group_cols)['有效单号'].apply(
             lambda x: '\n'.join(sorted(set(x.astype(str))))
         ).reset_index()
         order_list_df.rename(columns={'有效单号': '未匹配单号列表'}, inplace=True)
         order_list_df['未匹配单号个数'] = order_list_df['未匹配单号列表'].apply(lambda x: len(x.split('\n')) if x else 0)
 
-        # 聚合返回消息和差异类型
         msg_agg = all_unmatched.groupby(group_cols).agg(
             返回消息=('返回消息', lambda x: '\n'.join(sorted(set(x.astype(str))))),
             差异类型=('差异类型', lambda x: ';'.join(sorted(set([v for v in x if v != '']))))
@@ -320,29 +352,37 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
         df_summary = pd.merge(pivot, order_list_df, on=group_cols, how='left')
         df_summary = pd.merge(df_summary, msg_agg, on=group_cols, how='left')
         df_summary['数量'] = df_summary['出库数量'].astype(int)
-        # 填充空值
         df_summary['返回消息'] = df_summary['返回消息'].fillna('')
         df_summary['差异类型'] = df_summary['差异类型'].fillna('')
 
-        # 构建带标记的WMS表
+        # 构建带标记的WMS表（保留原始数据及调整后数量，但过滤掉有效单号为空的记录）
         all_matched = pd.concat([
             out_records[out_records['匹配'] == '是'] if not out_records.empty else pd.DataFrame(),
             receive_records[receive_records['匹配'] == '是'] if not receive_records.empty else pd.DataFrame()
         ], ignore_index=True)
-        all_unmatched_temp = pd.concat([unmatched_out, unmatched_cancel, unmatched_receive], ignore_index=True)
-        if not all_matched.empty and '有效单号' not in all_matched.columns:
-            all_matched['有效单号'] = all_matched.apply(
-                lambda row: row[COL_ORDER_WMS] if row[COL_ORDER_WMS] != '' else row[COL_COMMON_NO], axis=1
-            )
+        # 为matched记录也添加有效单号和调整数量（用于展示）
+        if not all_matched.empty:
+            def get_effective_order_matched(row):
+                lrp = row[COL_ORDER_WMS]
+                if lrp != '':
+                    return lrp
+                else:
+                    common = row[COL_COMMON_NO]
+                    if common != '' and not is_start_with_4(common):
+                        return common
+                    else:
+                        return ''
+            all_matched['有效单号'] = all_matched.apply(get_effective_order_matched, axis=1)
             all_matched['数量_调整'] = all_matched.apply(adjust_qty, axis=1)
+        # 未匹配记录已经过滤过有效单号
+        all_unmatched_temp = pd.concat([unmatched_out, unmatched_cancel, unmatched_receive], ignore_index=True)
         df_wms_marked = pd.concat([all_matched, all_unmatched_temp], ignore_index=True)
 
-    # 释放内存
     del out_records, cancel_records, receive_records
     del unmatched_out, unmatched_cancel, unmatched_receive
     gc.collect()
 
-    # 处理目标报表（与原逻辑一致）
+    # ========== 处理目标报表 ==========
     if df_target is not None and not df_target.empty:
         key_cols_target = [COL_MATERIAL_TARGET, COL_PLANT_TARGET, COL_STORAGE_TARGET, COL_DIFF_TARGET, COL_WAREHOUSE_TARGET]
         for col in key_cols_target:
@@ -554,7 +594,8 @@ with st.expander("📖 使用说明", expanded=False):
     2. 预览结果并下载
 
     ### 💡 特殊逻辑说明
-    - 当 LRP 单号为空时，系统会使用“单号”列匹配 R3 的“预留编号”，并且该记录的数量会自动除以2。
-    - 销售下单异常报表的“运单号”只与 WMS 的 LRP 单号关联，不会使用“单号”匹配。
-    - 未匹配汇总表中的数量为调整后的数量（LRP为空的记录已折半）。
+    - **R3匹配**：LRP单号非空时用LRP匹配前继单号；LRP为空且单号不以4开头时，用单号（去除前导0）匹配预留编号；单号以4开头的直接视为未匹配且不参与后续汇总。
+    - **销售报表匹配**：仅当LRP单号非空时，用LRP匹配运单号；LRP为空时销售消息为空。
+    - **数量调整**：仅当LRP单号为空时，数量自动除以2。
+    - **未匹配汇总**：使用“有效单号”（LRP优先，否则取不以4开头的单号）作为单号列表，以4开头的单号被完全忽略。
     """)
