@@ -39,156 +39,15 @@ if 'need_po_map' not in st.session_state:
 if 'template_df' not in st.session_state:
     st.session_state['template_df'] = None
 
-# ========== 自定义CSS（全局美化，不动功能） ==========
+# ========== 自定义CSS ==========
 st.markdown("""
 <style>
-    .stApp {
-        background: linear-gradient(145deg, #f8fafc 0%, #f1f5f9 100%) !important;
-        font-family: 'Inter', 'Segoe UI', 'Microsoft YaHei', sans-serif !important;
-    }
-    [data-testid="stSidebar"] {
-        background: #ffffff !important;
-        border-right: 1px solid #e2e8f0 !important;
-        box-shadow: 2px 0 12px rgba(0,0,0,0.02) !important;
-    }
-    [data-testid="stSidebar"] .stRadio label {
-        border-radius: 10px !important;
-        padding: 0.5rem 1rem !important;
-        transition: all 0.15s !important;
-    }
-    [data-testid="stSidebar"] .stRadio label:hover {
-        background: #f1f5f9 !important;
-    }
-    [data-testid="stSidebar"] .stRadio label[data-selected="true"] {
-        background: #eef2ff !important;
-        color: #2563eb !important;
-        font-weight: 500 !important;
-    }
-    h1 {
-        color: #1e293b !important;
-        font-weight: 700 !important;
-        border-bottom: 3px solid #2563eb !important;
-        display: inline-block !important;
-        padding-bottom: 0.25rem !important;
-    }
-    h2, h3 {
-        color: #334155 !important;
-        font-weight: 600 !important;
-    }
-    .stVerticalBlock > div[data-testid="stVerticalBlock"] {
-        background: #ffffff !important;
-        border-radius: 20px !important;
-        padding: 1.5rem 1.8rem !important;
-        box-shadow: 0 8px 20px -6px rgba(0,0,0,0.05), 0 2px 6px rgba(0,0,0,0.02) !important;
-        border: 1px solid #eef2f6 !important;
-        margin-bottom: 1.5rem !important;
-    }
-    .stButton > button {
-        background: linear-gradient(145deg, #2563eb, #1d4ed8) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 14px !important;
-        padding: 0.6rem 1.8rem !important;
-        font-weight: 500 !important;
-        box-shadow: 0 4px 8px -2px rgba(37,99,235,0.3) !important;
-        transition: all 0.2s ease !important;
-    }
-    .stButton > button:hover {
-        background: linear-gradient(145deg, #1d4ed8, #1e40af) !important;
-        transform: translateY(-1px) !important;
-        box-shadow: 0 8px 14px -4px rgba(37,99,235,0.4) !important;
-    }
-    div[data-testid="stHorizontalBlock"] .stButton:not(:first-child) > button {
-        background: #ffffff !important;
-        color: #475569 !important;
-        border: 1px solid #cbd5e1 !important;
-        box-shadow: none !important;
-    }
-    div[data-testid="stHorizontalBlock"] .stButton:not(:first-child) > button:hover {
-        background: #f8fafc !important;
-        border-color: #94a3b8 !important;
-        transform: none !important;
-    }
-    [data-testid="stFileUploader"] section {
-        border: 2px dashed #cbd5e1 !important;
-        border-radius: 24px !important;
-        background: #fafcff !important;
-        padding: 1.2rem 1.5rem !important;
-        transition: all 0.2s !important;
-    }
-    [data-testid="stFileUploader"] section:hover {
-        border-color: #2563eb !important;
-        background: #ffffff !important;
-        box-shadow: 0 4px 10px rgba(37,99,235,0.05) !important;
-    }
-    [data-testid="stDataFrame"] {
-        border-radius: 16px !important;
-        border: 1px solid #e2e8f0 !important;
-        overflow: hidden !important;
-    }
-    [data-testid="stDataFrame"] th {
-        background: #f8fafc !important;
-        color: #0f172a !important;
-        font-weight: 600 !important;
-        padding: 0.8rem 1rem !important;
-    }
-    [data-testid="stDataFrame"] td {
-        padding: 0.65rem 1rem !important;
-        border-bottom: 1px solid #f1f5f9 !important;
-    }
-    [data-testid="stDownloadButton"] > button {
-        background: white !important;
-        color: #2563eb !important;
-        border: 1.5px solid #2563eb !important;
-        border-radius: 12px !important;
-        font-weight: 500 !important;
-        box-shadow: none !important;
-    }
-    [data-testid="stDownloadButton"] > button:hover {
-        background: #eff6ff !important;
-        border-color: #1e40af !important;
-    }
-    [data-testid="stAlert"] {
-        border-radius: 16px !important;
-        border-left-width: 8px !important;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.02) !important;
-    }
-    details {
-        background: #ffffff !important;
-        border-radius: 18px !important;
-        border: 1px solid #eef2f6 !important;
-        padding: 1.2rem 1.8rem !important;
-        margin-top: 2.5rem !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.02) !important;
-    }
-    details summary {
-        font-weight: 650 !important;
-        color: #1e293b !important;
-    }
-    [data-testid="stTabs"] button {
-        border-radius: 14px 14px 0 0 !important;
-        padding: 0.6rem 1.8rem !important;
-        font-weight: 500 !important;
-        background: transparent !important;
-        color: #64748b !important;
-    }
-    [data-testid="stTabs"] button[aria-selected="true"] {
-        background: #ffffff !important;
-        color: #2563eb !important;
-        border-bottom: 3px solid #2563eb !important;
-    }
-    [data-testid="stMetric"] {
-        background: #ffffff !important;
-        border-radius: 18px !important;
-        padding: 1.2rem 1.5rem !important;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.02) !important;
-        border: 1px solid #f0f4f9 !important;
-    }
+    * { font-family: "Microsoft YaHei", "SimHei", "PingFang SC", sans-serif; }
+    .stButton button { font-size: 16px; font-weight: 500; }
 </style>
 """, unsafe_allow_html=True)
 
 # ========== 列名配置 ==========
-# WMS
 COL_ORDER_WMS = 'LRP单号'
 COL_COMMON_NO = '单号'
 COL_MATERIAL_WMS = '货品编码'
@@ -199,20 +58,14 @@ COL_INOUT = '进or出'
 COL_KEEPER = '保管员'
 COL_TRANS_TYPE = '交易类型'
 
-# R3（请根据实际列名修改）
 COL_ORDER_R3 = '前继单号'
 COL_QTY_R3 = '数量'
 COL_RESERVE_R3 = '预留编号'
-COL_MATERIAL_R3 = '物料代码'      # R3物料编码列名
-COL_PLANT_R3 = '工厂'            # R3工厂列名
-COL_STORAGE_R3 = '库位'          # R3库位列名
-COL_PO_R3 = '采购订单'           # R3采购订单列名
+COL_PO_IN_R3 = '采购订单'          # R3表中采购订单列名
 
-# 销售报表
 COL_ORDER_SALES = '运单号'
 COL_MSG_SALES = '返回消息'
 
-# 目标报表
 COL_MATERIAL_TARGET = '货品编号'
 COL_PLANT_TARGET = '工厂编码'
 COL_STORAGE_TARGET = '库位编码'
@@ -236,91 +89,78 @@ KEYWORD_DIFF_TYPE = {
 
 # ========== 辅助函数 ==========
 def clean_str(val):
-    if pd.isna(val): return ''
+    if pd.isna(val):
+        return ''
     s = str(val).strip()
-    if s.lower() in ['nan', 'null', 'none', '']: return ''
+    if s.lower() in ['nan', 'null', 'none', '']:
+        return ''
     try:
         if '.' in s:
             f = float(s)
-            if f.is_integer(): s = str(int(f))
-    except: pass
+            if f.is_integer():
+                s = str(int(f))
+    except:
+        pass
     return s
 
 def normalize_number(s):
     s = s.strip()
-    if s == '' or s == '0': return s
+    if s == '' or s == '0':
+        return s
     return s.lstrip('0')
 
 def is_start_with_4(s):
     return str(s).strip().startswith('4')
 
-def is_start_with_01(s):
-    return str(s).strip().startswith('01')
-
 def clean_float(val):
-    try: return float(val)
-    except: return 0.0
+    try:
+        return float(val)
+    except:
+        return 0.0
 
 def get_diff_type(msg):
-    if pd.isna(msg) or msg == '': return ''
+    if pd.isna(msg) or msg == '':
+        return ''
     types = []
     for k, v in KEYWORD_DIFF_TYPE.items():
-        if k in msg: types.append(v)
+        if k in msg:
+            types.append(v)
     return ';'.join(list(dict.fromkeys(types)))
 
 def read_file(file):
-    if file is None: return None
+    if file is None:
+        return None
     try:
-        if file.name.endswith('.csv'): return pd.read_csv(file, encoding='utf-8-sig')
-        elif file.name.endswith('.xls'): return pd.read_excel(file, engine='xlrd')
-        else: return pd.read_excel(file, engine='openpyxl')
+        if file.name.endswith('.csv'):
+            return pd.read_csv(file, encoding='utf-8-sig')
+        elif file.name.endswith('.xls'):
+            return pd.read_excel(file, engine='xlrd')
+        else:
+            return pd.read_excel(file, engine='openpyxl')
     except:
-        try: return pd.read_excel(file)
+        try:
+            return pd.read_excel(file)
         except:
             file.seek(0)
             return pd.read_csv(file, encoding='utf-8-sig')
 
 @st.cache_data
 def get_r3_sets(df_r3):
-    df_r3['_mat'] = df_r3[COL_MATERIAL_R3].astype(str).apply(clean_str)
-    df_r3['_plant'] = df_r3[COL_PLANT_R3].astype(str).apply(clean_str)
-    df_r3['_storage'] = df_r3[COL_STORAGE_R3].astype(str).apply(clean_str)
-    df_r3['_order'] = df_r3[COL_ORDER_R3].astype(str).apply(clean_str)
-    df_r3['_reserve'] = df_r3[COL_RESERVE_R3].astype(str).apply(clean_str).apply(normalize_number)
-    df_r3['_po'] = df_r3[COL_PO_R3].astype(str).apply(clean_str)
-
-    out_mask = df_r3[COL_QTY_R3] < 0
-    in_mask = df_r3[COL_QTY_R3] > 0
-
-    outbound_order = set()
-    inbound_order = set()
-    for _, row in df_r3[out_mask].iterrows():
-        if row['_order'] != '':
-            outbound_order.add((row['_order'], row['_mat'], row['_plant'], row['_storage']))
-    for _, row in df_r3[in_mask].iterrows():
-        if row['_order'] != '':
-            inbound_order.add((row['_order'], row['_mat'], row['_plant'], row['_storage']))
-
+    outbound_order = set(df_r3[df_r3[COL_QTY_R3] < 0][COL_ORDER_R3].astype(str).apply(clean_str))
+    inbound_order = set(df_r3[df_r3[COL_QTY_R3] > 0][COL_ORDER_R3].astype(str).apply(clean_str))
+    outbound_order.discard('')
+    inbound_order.discard('')
+    
     outbound_reserve = set()
     inbound_reserve = set()
-    for _, row in df_r3[out_mask].iterrows():
-        if row['_reserve'] != '':
-            outbound_reserve.add((row['_reserve'], row['_mat'], row['_plant'], row['_storage']))
-    for _, row in df_r3[in_mask].iterrows():
-        if row['_reserve'] != '':
-            inbound_reserve.add((row['_reserve'], row['_mat'], row['_plant'], row['_storage']))
-
-    outbound_po = set()
-    inbound_po = set()
-    for _, row in df_r3[out_mask].iterrows():
-        if row['_po'] != '':
-            outbound_po.add((row['_po'], row['_mat'], row['_plant'], row['_storage']))
-    for _, row in df_r3[in_mask].iterrows():
-        if row['_po'] != '':
-            inbound_po.add((row['_po'], row['_mat'], row['_plant'], row['_storage']))
-
-    return (outbound_order, inbound_order, outbound_reserve, inbound_reserve,
-            outbound_po, inbound_po)
+    if COL_RESERVE_R3 in df_r3.columns:
+        reserve_clean = df_r3[COL_RESERVE_R3].astype(str).apply(clean_str)
+        outbound_reserve = set(normalize_number(v) for v in reserve_clean[df_r3[COL_QTY_R3] < 0] if v != '')
+        inbound_reserve = set(normalize_number(v) for v in reserve_clean[df_r3[COL_QTY_R3] > 0] if v != '')
+        outbound_reserve.discard('')
+        inbound_reserve.discard('')
+    
+    return outbound_order, inbound_order, outbound_reserve, inbound_reserve
 
 def apply_po_mapping(df_r3, df_map):
     if df_map is None or df_map.empty:
@@ -350,39 +190,22 @@ def apply_po_mapping(df_r3, df_map):
     return df_r3_copy
 
 def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
-    sets = get_r3_sets(df_r3)
-    (outbound_order, inbound_order, outbound_reserve, inbound_reserve,
-     outbound_po, inbound_po) = sets
+    outbound_order, inbound_order, outbound_reserve, inbound_reserve = get_r3_sets(df_r3)
 
-    # ========== 清洗WMS数据 ==========
     df_wms[COL_ORDER_WMS] = df_wms[COL_ORDER_WMS].astype(str).apply(clean_str)
     df_wms[COL_COMMON_NO] = df_wms[COL_COMMON_NO].astype(str).apply(clean_str)
+
     for col in [COL_MATERIAL_WMS, COL_PLANT_WMS, COL_STORAGE_WMS, COL_INOUT, COL_KEEPER, COL_TRANS_TYPE]:
         if col in df_wms.columns:
             df_wms[col] = df_wms[col].astype(str).apply(clean_str)
+
     df_wms[COL_QTY_WMS] = df_wms[COL_QTY_WMS].apply(clean_float)
 
     cond1 = (df_wms[COL_INOUT] == 'OUT') & (df_wms[COL_TRANS_TYPE] == '出库')
     cond2 = (df_wms[COL_INOUT] == 'OUT') & (df_wms[COL_TRANS_TYPE] == '取消出库')
     cond3 = (df_wms[COL_INOUT] == 'IN') & (df_wms[COL_TRANS_TYPE] == '收货')
     df_wms = df_wms[cond1 | cond2 | cond3]
-
-    # 需要保留系统API保管员的收货记录条件：LRP空，单号不以01/4开头
-    keep_api_condition = (
-        (df_wms[COL_INOUT] == 'IN') &
-        (df_wms[COL_TRANS_TYPE] == '收货') &
-        (df_wms[COL_ORDER_WMS].astype(str).apply(clean_str) == '') &
-        (~df_wms[COL_COMMON_NO].astype(str).apply(clean_str).str.startswith('01')) &
-        (~df_wms[COL_COMMON_NO].astype(str).apply(clean_str).str.startswith('4'))
-    )
-
-    # 需要删除的系统API记录：出库/取消出库，以及不符合上述条件的收货
-    delete_api_condition = (
-        (df_wms[COL_KEEPER] == '系统API') &
-        ~keep_api_condition
-    )
-
-    df_wms = df_wms[~delete_api_condition]
+    df_wms = df_wms[df_wms[COL_KEEPER] != '系统API']
 
     if df_wms.empty:
         return None, None, None
@@ -391,54 +214,29 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
     cancel_records = df_wms[(df_wms[COL_INOUT] == 'OUT') & (df_wms[COL_TRANS_TYPE] == '取消出库')].copy()
     receive_records = df_wms[(df_wms[COL_INOUT] == 'IN') & (df_wms[COL_TRANS_TYPE] == '收货')].copy()
 
-    # ========== 匹配函数（最新规则） ==========
     def match_outbound(row):
-        lrp = clean_str(row[COL_ORDER_WMS])
-        mat = clean_str(row[COL_MATERIAL_WMS])
-        plant = clean_str(row[COL_PLANT_WMS])
-        storage = clean_str(row[COL_STORAGE_WMS])
-        common = clean_str(row[COL_COMMON_NO])
-
+        lrp = row[COL_ORDER_WMS]
         if lrp != '':
-            key = (lrp, mat, plant, storage)
-            return '是' if key in outbound_order else '否'
+            return '是' if lrp in outbound_order else '否'
         else:
-            if common == '':
-                return '否'
-            if is_start_with_4(common):
-                key = (common, mat, plant, storage)
-                return '是' if key in outbound_po else '否'
-            elif is_start_with_01(common):
-                key = (common, mat, plant, storage)
-                return '是' if key in outbound_order else '否'
-            else:
+            common = row[COL_COMMON_NO]
+            if common != '' and not is_start_with_4(common):
                 common_norm = normalize_number(common)
-                key = (common_norm, mat, plant, storage)
-                return '是' if key in outbound_reserve else '否'
+                return '是' if common_norm in outbound_reserve else '否'
+            else:
+                return '否'
 
     def match_inbound(row):
-        lrp = clean_str(row[COL_ORDER_WMS])
-        mat = clean_str(row[COL_MATERIAL_WMS])
-        plant = clean_str(row[COL_PLANT_WMS])
-        storage = clean_str(row[COL_STORAGE_WMS])
-        common = clean_str(row[COL_COMMON_NO])
-
+        lrp = row[COL_ORDER_WMS]
         if lrp != '':
-            key = (lrp, mat, plant, storage)
-            return '是' if key in inbound_order else '否'
+            return '是' if lrp in inbound_order else '否'
         else:
-            if common == '':
-                return '否'
-            if is_start_with_4(common):
-                key = (common, mat, plant, storage)
-                return '是' if key in inbound_po else '否'
-            elif is_start_with_01(common):
-                key = (common, mat, plant, storage)
-                return '是' if key in inbound_order else '否'
-            else:
+            common = row[COL_COMMON_NO]
+            if common != '' and not is_start_with_4(common):
                 common_norm = normalize_number(common)
-                key = (common_norm, mat, plant, storage)
-                return '是' if key in inbound_reserve else '否'
+                return '是' if common_norm in inbound_reserve else '否'
+            else:
+                return '否'
 
     if not out_records.empty:
         out_records['匹配'] = out_records.apply(match_outbound, axis=1)
@@ -458,9 +256,8 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
     else:
         unmatched_cancel = pd.DataFrame()
 
-    # ========== 数量调整（仅出库且LRP为空时除以2） ==========
     def adjust_qty(row, record_type):
-        if record_type == 'out' and clean_str(row[COL_ORDER_WMS]) == '':
+        if record_type == 'out' and row[COL_ORDER_WMS] == '':
             return row[COL_QTY_WMS] / 2.0
         else:
             return row[COL_QTY_WMS]
@@ -475,14 +272,13 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
         unmatched_receive['数量_调整'] = unmatched_receive[COL_QTY_WMS]
         unmatched_receive['记录类型'] = '收货'
 
-    # ========== 有效单号（用于展示） ==========
     def get_effective_order(row):
-        lrp = clean_str(row[COL_ORDER_WMS])
+        lrp = row[COL_ORDER_WMS]
         if lrp != '':
             return lrp
         else:
-            common = clean_str(row[COL_COMMON_NO])
-            if common != '' and not is_start_with_4(common) and not is_start_with_01(common):
+            common = row[COL_COMMON_NO]
+            if common != '' and not is_start_with_4(common):
                 return common
             else:
                 return ''
@@ -490,13 +286,12 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
     for df_temp in [unmatched_out, unmatched_cancel, unmatched_receive]:
         if not df_temp.empty:
             df_temp['有效单号'] = df_temp.apply(get_effective_order, axis=1)
-            df_temp['原始LRP'] = df_temp[COL_ORDER_WMS].apply(clean_str)
+            df_temp['原始LRP'] = df_temp[COL_ORDER_WMS]
 
     unmatched_out = unmatched_out[unmatched_out['有效单号'] != ''] if not unmatched_out.empty else unmatched_out
     unmatched_cancel = unmatched_cancel[unmatched_cancel['有效单号'] != ''] if not unmatched_cancel.empty else unmatched_cancel
     unmatched_receive = unmatched_receive[unmatched_receive['有效单号'] != ''] if not unmatched_receive.empty else unmatched_receive
 
-    # ========== 销售报表匹配 ==========
     if df_sales is not None and not df_sales.empty and COL_ORDER_SALES in df_sales.columns and COL_MSG_SALES in df_sales.columns:
         df_sales[COL_ORDER_SALES] = df_sales[COL_ORDER_SALES].astype(str).apply(clean_str)
         df_sales[COL_MSG_SALES] = df_sales[COL_MSG_SALES].astype(str).apply(clean_str)
@@ -512,7 +307,6 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
                 df_temp['返回消息'] = ''
                 df_temp['差异类型'] = ''
 
-    # ========== 出库与取消出库抵消 ==========
     key_cols = [COL_COMMON_NO, COL_MATERIAL_WMS, COL_PLANT_WMS, COL_STORAGE_WMS]
 
     if not unmatched_out.empty:
@@ -551,7 +345,6 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
     else:
         net_out = pd.DataFrame()
 
-    # ========== 收货记录 ==========
     if not unmatched_receive.empty:
         receive_with_keys = unmatched_receive.copy()
         receive_with_keys['_key'] = receive_with_keys[key_cols].apply(tuple, axis=1)
@@ -571,7 +364,6 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
     else:
         receive_agg = pd.DataFrame()
 
-    # ========== 合并汇总 ==========
     all_unmatched_agg = pd.concat([net_out, receive_agg], ignore_index=True, sort=False)
 
     if all_unmatched_agg.empty:
@@ -580,10 +372,6 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
                                            '出库数量', '收货数量'])
     else:
         group_cols = [COL_MATERIAL_WMS, COL_PLANT_WMS, COL_STORAGE_WMS]
-
-        for col in ['出库净数量', '收货净数量', '未匹配单号列表', '收货单号列表', '返回消息', '差异类型']:
-            if col not in all_unmatched_agg.columns:
-                all_unmatched_agg[col] = '' if '列表' in col or '消息' in col or '类型' in col else 0
 
         final_agg = all_unmatched_agg.groupby(group_cols).agg({
             '出库净数量': lambda x: x.fillna(0).sum(),
@@ -601,7 +389,6 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
         df_summary = final_agg[group_cols + ['未匹配单号列表', '未匹配单号个数', '数量', '返回消息', '差异类型', '出库净数量', '收货净数量']]
         df_summary.rename(columns={'出库净数量': '出库数量', '收货净数量': '收货数量'}, inplace=True)
 
-    # ========== 构建带标记的WMS表 ==========
     all_matched = pd.concat([
         out_records[out_records['匹配'] == '是'] if not out_records.empty else pd.DataFrame(),
         receive_records[receive_records['匹配'] == '是'] if not receive_records.empty else pd.DataFrame()
@@ -609,12 +396,12 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
 
     if not all_matched.empty:
         def get_effective_order_matched(row):
-            lrp = clean_str(row[COL_ORDER_WMS])
+            lrp = row[COL_ORDER_WMS]
             if lrp != '':
                 return lrp
             else:
-                common = clean_str(row[COL_COMMON_NO])
-                if common != '' and not is_start_with_4(common) and not is_start_with_01(common):
+                common = row[COL_COMMON_NO]
+                if common != '' and not is_start_with_4(common):
                     return common
                 else:
                     return ''
@@ -623,12 +410,11 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
         all_matched['记录类型'] = all_matched[COL_TRANS_TYPE]
         all_matched['返回消息'] = ''
         all_matched['差异类型'] = ''
-        all_matched['原始LRP'] = all_matched[COL_ORDER_WMS].apply(clean_str)
+        all_matched['原始LRP'] = all_matched[COL_ORDER_WMS]
 
     unmatched_all = pd.concat([unmatched_out, unmatched_cancel, unmatched_receive], ignore_index=True)
     df_wms_marked = pd.concat([all_matched, unmatched_all], ignore_index=True)
 
-    # ========== 处理目标报表 ==========
     if df_target is not None and not df_target.empty:
         key_cols_target = [COL_MATERIAL_TARGET, COL_PLANT_TARGET, COL_STORAGE_TARGET, COL_DIFF_TARGET, COL_WAREHOUSE_TARGET]
         for col in key_cols_target:
@@ -644,13 +430,6 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
                 rdc_wh_list = set(df_rdc[COL_RDC_WAREHOUSE].astype(str).apply(clean_str))
                 df_target = df_target[df_target[COL_WAREHOUSE_TARGET].isin(rdc_wh_list)]
 
-        df_target['未匹配单号列表'] = ''
-        df_target['未匹配单号个数'] = 0
-        df_target['数量'] = 0
-        df_target['返回消息'] = ''
-        df_target['差异类型'] = ''
-        df_target['调整后差异'] = 0.0
-
         if not df_summary.empty:
             summary_dict = {}
             for _, row in df_summary.iterrows():
@@ -664,6 +443,13 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
                     '出库数量': row['出库数量'],
                     '收货数量': row['收货数量']
                 }
+
+            df_target['未匹配单号列表'] = ''
+            df_target['未匹配单号个数'] = 0
+            df_target['数量'] = 0
+            df_target['返回消息'] = ''
+            df_target['差异类型'] = ''
+            df_target['调整后差异'] = 0.0
 
             for idx, row in df_target.iterrows():
                 key = (row[COL_MATERIAL_TARGET], row[COL_PLANT_TARGET], row[COL_STORAGE_TARGET])
@@ -701,22 +487,23 @@ if page == "库存对账工具":
 
     with st.sidebar:
         st.header("⚙️ 配置选项")
-        skip_rdc = st.checkbox("🚫 跳过 RDC 仓库匹配", value=False)
+        skip_rdc = st.checkbox("跳过 RDC 仓库匹配", value=False)
         st.markdown("---")
         st.info("支持 .xlsx、.xls、.csv 格式，每个文件限 200MB")
 
     col1, col2 = st.columns(2)
+
     with col1:
         st.subheader("📂 源文件")
         wms_file = st.file_uploader("WMS 交易记录", type=['xlsx', 'xls', 'csv'], key="wms")
         r3_file = st.file_uploader("R3 交易记录", type=['xlsx', 'xls', 'csv'], key="r3")
         sales_file = st.file_uploader("销售下单异常报表 (可选)", type=['xlsx', 'xls', 'csv'], key="sales")
+
     with col2:
         st.subheader("📊 对比报表")
         target_file = st.file_uploader("WMS与R3库存差异报表", type=['xlsx', 'xls', 'csv'], key="target")
         rdc_file = st.file_uploader("RDC 仓库编号 (可选)", type=['xlsx', 'xls', 'csv'], key="rdc")
 
-    # 映射表处理
     if st.session_state['need_po_map']:
         st.warning("⚠️ 检测到非 L 开头的前继单号，请下载模板填写对应的 LRP 单号。")
         if st.session_state['template_df'] is not None:
@@ -724,7 +511,7 @@ if page == "库存对账工具":
             with pd.ExcelWriter(buffer, engine='openpyxl') as w:
                 st.session_state['template_df'].to_excel(w, index=False, sheet_name='模板')
             st.download_button(
-                label="📥 下载采购订单映射模板",
+                label="📥 下载映射模板",
                 data=buffer.getvalue(),
                 file_name=f"采购订单映射模板_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -761,7 +548,7 @@ if page == "库存对账工具":
                         st.error(f"❌ 处理失败: {str(e)}")
                         st.exception(e)
         with c2:
-            if st.button("⏭️ 跳过映射，直接对账"):
+            if st.button("❌ 跳过映射，直接使用原单号对账"):
                 with st.spinner("⏳ 正在处理数据，请稍候..."):
                     res = process_data(
                         st.session_state['pending_wms'],
@@ -782,7 +569,6 @@ if page == "库存对账工具":
                 st.rerun()
         st.stop()
 
-    # 开始对账
     if st.button("🚀 开始对账", type="primary", use_container_width=True):
         if not all([wms_file, r3_file, target_file]):
             st.error("❌ 请至少上传 WMS交易记录、R3交易记录 和 WMS与R3库存差异报表 三个文件")
@@ -799,19 +585,25 @@ if page == "库存对账工具":
                     st.error(f"❌ 文件读取失败: {str(e)}")
                     st.stop()
 
+            # 加强版检测逻辑：先清洗再判断，并显示检测数量供用户核对
             df_r3['_clean_order'] = df_r3[COL_ORDER_R3].astype(str).apply(clean_str)
+            # 非空且第一个字符不是L
             mask = (df_r3['_clean_order'] != '') & (~df_r3['_clean_order'].str.startswith('L'))
+            st.info(f"检测到 {mask.sum()} 条非空且非L开头的前继单号记录")
             if mask.any():
-                if COL_PO_R3 in df_r3.columns:
-                    sub = df_r3.loc[mask, [COL_ORDER_R3, COL_PO_R3]].copy()
+                if COL_PO_IN_R3 in df_r3.columns:
+                    sub = df_r3.loc[mask, [COL_ORDER_R3, COL_PO_IN_R3]].copy()
                 else:
-                    st.error(f"R3 表中缺少 '{COL_PO_R3}' 列，无法生成模板。")
+                    st.error(f"R3 表中缺少 '{COL_PO_IN_R3}' 列，无法生成模板。")
                     st.stop()
                 sub[COL_ORDER_R3] = sub[COL_ORDER_R3].astype(str).apply(clean_str)
-                sub[COL_PO_R3] = sub[COL_PO_R3].astype(str).apply(clean_str)
+                sub[COL_PO_IN_R3] = sub[COL_PO_IN_R3].astype(str).apply(clean_str)
                 sub = sub.drop_duplicates()
+                st.write(f"去重后待映射单号数量: {len(sub)}")
+                # 输出前几个样本供检查
+                st.write("样本:", sub.head(5).to_dict('records'))
                 template = pd.DataFrame({
-                    COL_TEMPLATE_PO: sub[COL_PO_R3],
+                    COL_TEMPLATE_PO: sub[COL_PO_IN_R3],
                     COL_TEMPLATE_OLD_ORDER: sub[COL_ORDER_R3],
                     COL_TEMPLATE_LRP: ''
                 })
@@ -838,7 +630,6 @@ if page == "库存对账工具":
                         st.error(f"❌ 处理失败: {str(e)}")
                         st.exception(e)
 
-    # 显示结果
     if st.session_state['reconciliation_done']:
         df_result = st.session_state['last_reconciliation_result']
         df_summary = st.session_state['last_summary']
@@ -908,30 +699,27 @@ if page == "库存对账工具":
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
-# 使用说明
 with st.expander("📖 使用说明", expanded=False):
     st.markdown("""
     ### 📋 库存对账工具文件说明
     | 文件 | 必需 | 说明 |
     |------|------|------|
     | WMS交易记录 | ✅ | 包含 LRP单号、单号、货品编码、工厂、ERP库位、数量、进or出、保管员、交易类型 |
-    | R3交易记录 | ✅ | 包含 前继单号、数量、预留编号、物料代码、工厂、库位、采购订单 |
+    | R3交易记录 | ✅ | 包含 前继单号、数量、预留编号、**采购订单** |
     | WMS与R3库存差异报表 | ✅ | 包含 货品编号、工厂编码、库位编码、WMS和ERP的差异库存、仓库编码 |
     | 销售下单异常报表 | ❌ | 包含 运单号、返回消息 |
     | RDC仓库编号 | ❌ | 包含 仓库编号 |
 
     ### 🚀 操作步骤
     1. 上传必需文件，点击"开始对账"
-    2. 若 R3 中存在非 L 开头的前继单号，工具会生成映射模板，请下载并填写对应的 LRP 单号后上传
-    3. 查看结果并下载 Excel 报表
+    2. 若 R3 中存在非 L 开头的前继单号，工具会生成映射模板（含采购订单号），请下载并填写对应的 LRP 单号
+    3. 上传填写好的映射表（或选择跳过直接对账）
+    4. 查看结果并下载 Excel 报表
 
-    ### 💡 匹配规则（最新版）
-    - **LRP非空**：LRP单号 + 货品编码 + 工厂 + ERP库位 ↔ 前继单号 + 物料代码 + 工厂 + 库位
-    - **LRP为空且单号不以4/01开头**：单号(去前导0) + 货品编码 + 工厂 + ERP库位 ↔ 预留编号(去前导0) + 物料代码 + 工厂 + 库位
-    - **LRP为空且单号以4开头**：单号(原值) + 货品编码 + 工厂 + ERP库位 ↔ 采购订单 + 物料代码 + 工厂 + 库位
-    - **LRP为空且单号以01开头**：单号(原值) + 货品编码 + 工厂 + ERP库位 ↔ 前继单号 + 物料代码 + 工厂 + 库位
+    ### 💡 特殊逻辑说明
+    - **R3匹配**：LRP非空时匹配前继单号；LRP空且单号不以4开头时匹配预留编号（去除前导0）。
+    - **数量调整**：仅出库且LRP为空时数量除以2；取消出库和收货不除。
     - **取消出库抵消**：按 单号+货品编码+工厂+ERP库位 四字段完全匹配，净数量>0才保留。
-    - **数量调整**：仅出库且LRP为空时数量除以2。
     - **调整后差异**：正差异减净未匹配量，负差异加净未匹配量。
-    - **系统API保管员**：仅保留收货且LRP空、单号不以01/4开头的记录，其余系统API记录删除。
+    - **映射表替换**：根据模板中的「原前继单号」匹配，替换为「对应LRP单号」。
     """)
