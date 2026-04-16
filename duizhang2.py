@@ -7,7 +7,7 @@ from datetime import datetime
 
 # ========== 页面配置 ==========
 st.set_page_config(
-    page_title="美菱涉及工作系统-周周",
+    page_title="库存对账工具",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
