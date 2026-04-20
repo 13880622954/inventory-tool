@@ -7,3 +7,4 @@ pandas>=1.5.0
 openpyxl>=3.1.0
 pymysql
 boto3
+supabase
