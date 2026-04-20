@@ -1,24 +1,19 @@
-# 注意：此代码与之前提供的 app_cloud.py 完全相同，但为了保险，请使用以下最新版
 import streamlit as st
 import pandas as pd
 import json
 import os
 import tempfile
 import zipfile
-import shutil
 from datetime import datetime
 import mimetypes
 import base64
-import pymysql
+from supabase import create_client, Client
 import boto3
 from botocore.client import Config
 
 # ========== 从 Streamlit Secrets 读取配置 ==========
-DB_HOST = st.secrets["DB_HOST"]
-DB_PORT = int(st.secrets.get("DB_PORT", 4000))
-DB_USER = st.secrets["DB_USER"]
-DB_PASSWORD = st.secrets["DB_PASSWORD"]
-DB_NAME = st.secrets.get("DB_NAME", "test")
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
 S3_ENDPOINT = st.secrets["S3_ENDPOINT"]
 S3_ACCESS_KEY = st.secrets["S3_ACCESS_KEY"]
@@ -26,19 +21,14 @@ S3_SECRET_KEY = st.secrets["S3_SECRET_KEY"]
 S3_BUCKET = st.secrets["S3_BUCKET"]
 S3_SECURE = st.secrets.get("S3_SECURE", "true").lower() == "true"
 
-# 初始化数据库连接
-def get_db_connection():
-    return pymysql.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        database=DB_NAME,
-        charset='utf8mb4',
-        cursorclass=pymysql.cursors.DictCursor
-    )
+# 初始化 Supabase 客户端
+@st.cache_resource
+def get_supabase() -> Client:
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 初始化 S3 客户端
+supabase = get_supabase()
+
+# 初始化 S3 客户端（七牛云）
 @st.cache_resource
 def get_s3_client():
     return boto3.client(
@@ -52,20 +42,17 @@ def get_s3_client():
 
 s3_client = get_s3_client()
 
-# ========== 数据库操作 ==========
+# ========== 数据库操作函数 ==========
 def load_data():
-    conn = get_db_connection()
-    with conn.cursor() as cur:
-        cur.execute("SELECT id, danhao, event, remark, warehouse, material, status, files_info, upload_time FROM records ORDER BY upload_time DESC")
-        rows = cur.fetchall()
-    conn.close()
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return df
+    response = supabase.table("records").select("*").order("upload_time", desc=True).execute()
+    data = response.data
+    if not data:
+        return pd.DataFrame()
+    df = pd.DataFrame(data)
     def parse_files(x):
         if x:
             try:
-                return json.loads(x)
+                return json.loads(x) if isinstance(x, str) else x
             except:
                 return []
         return []
@@ -83,28 +70,33 @@ def load_data():
     return df
 
 def add_record(danhao, event, remark, warehouse, material, status, files_list):
-    conn = get_db_connection()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now().isoformat()
     files_json = json.dumps(files_list, ensure_ascii=False)
-    with conn.cursor() as cur:
-        cur.execute('''
-            INSERT INTO records (danhao, event, remark, warehouse, material, status, files_info, upload_time)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        ''', (danhao, event, remark, warehouse, material, status, files_json, now))
-        conn.commit()
-    conn.close()
+    supabase.table("records").insert({
+        "danhao": danhao,
+        "event": event,
+        "remark": remark,
+        "warehouse": warehouse,
+        "material": material,
+        "status": status,
+        "files_info": files_json,
+        "upload_time": now
+    }).execute()
 
 def update_record(record_id, danhao, event, remark, warehouse, material, status, files_list):
-    conn = get_db_connection()
     files_json = json.dumps(files_list, ensure_ascii=False)
-    with conn.cursor() as cur:
-        cur.execute('''
-            UPDATE records SET danhao=%s, event=%s, remark=%s, warehouse=%s, material=%s, status=%s, files_info=%s WHERE id=%s
-        ''', (danhao, event, remark, warehouse, material, status, files_json, record_id))
-        conn.commit()
-    conn.close()
+    supabase.table("records").update({
+        "danhao": danhao,
+        "event": event,
+        "remark": remark,
+        "warehouse": warehouse,
+        "material": material,
+        "status": status,
+        "files_info": files_json
+    }).eq("id", record_id).execute()
 
 def delete_record(record_id, files_list):
+    # 删除云存储中的文件
     for f in files_list:
         object_key = f.get('object_key')
         if object_key:
@@ -112,12 +104,10 @@ def delete_record(record_id, files_list):
                 s3_client.delete_object(Bucket=S3_BUCKET, Key=object_key)
             except Exception as e:
                 st.error(f"删除文件失败: {e}")
-    conn = get_db_connection()
-    with conn.cursor() as cur:
-        cur.execute("DELETE FROM records WHERE id=%s", (record_id,))
-        conn.commit()
-    conn.close()
+    # 删除数据库记录
+    supabase.table("records").delete().eq("id", record_id).execute()
 
+# ========== 导出功能 ==========
 def export_to_zip(df, label):
     if df.empty:
         st.warning("没有数据可导出")
@@ -183,9 +173,9 @@ def preview_file_from_cloud(object_key, filename):
 
 # ========== Streamlit UI ==========
 st.set_page_config(page_title="文件管理助手", layout="wide")
-st.title("📁 文件管理助手 - 云版")
+st.title("📁 文件管理助手 - 云版（Supabase）")
 
-# 侧边栏表单（与之前相同，略）
+# 侧边栏表单
 with st.sidebar:
     st.header("➕ 添加新记录")
     with st.form("upload_form", clear_on_submit=True):
@@ -222,9 +212,10 @@ with st.sidebar:
                 st.success(f"✅ 已保存记录，包含 {len(files_list)} 个文件/文字项！")
                 st.rerun()
 
-# 筛选区域（与原代码相同，略）
+# 筛选区域
 st.subheader("🔍 筛选记录")
 st.caption("多个条件同时满足（AND），模糊匹配")
+
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     search_danhao = st.text_input("涉及单号", placeholder="包含...")
@@ -234,6 +225,7 @@ with col3:
     search_remark = st.text_input("备注", placeholder="包含...")
 with col4:
     search_warehouse = st.text_input("涉及仓库", placeholder="包含...")
+
 col5, col6, col7, col8, col9, col10, col11 = st.columns([1, 1, 1, 1.5, 1, 1, 1])
 with col5:
     search_material = st.text_input("涉及物料", placeholder="包含...")
@@ -249,21 +241,26 @@ with col10:
     reset_clicked = st.button("🗑️ 重置", use_container_width=True)
 with col11:
     st.write("")
+
 col_export1, col_export2 = st.columns(2)
 with col_export1:
     export_all_clicked = st.button("📦 导出全部记录", use_container_width=True)
 with col_export2:
     export_filtered_clicked = st.button("📂 导出筛选记录", use_container_width=True)
+
 if reset_clicked:
     for key in ["search_danhao", "search_event", "search_remark", "search_warehouse", "search_material", "search_status", "search_date", "search_filename"]:
         if key in st.session_state:
             st.session_state[key] = ""
     st.rerun()
 
+# 加载数据
 df = load_data()
 if df.empty:
     st.info("📭 暂无记录，请从左侧添加。")
     st.stop()
+
+# 筛选
 mask = pd.Series([True] * len(df))
 if search_danhao:
     mask &= df["单号"].astype(str).str.contains(search_danhao, case=False, na=False)
@@ -281,10 +278,11 @@ if search_date:
     mask &= df["上传时间"].astype(str).str.contains(search_date, case=False, na=False)
 if search_filename:
     mask &= df["文件名显示"].astype(str).str.contains(search_filename, case=False, na=False)
+
 filtered_df = df[mask]
 st.write(f"📊 共 **{len(filtered_df)}** 条记录")
 
-# 导出逻辑（与原代码相同，略）
+# 导出全部/筛选
 if export_all_clicked:
     if df.empty:
         st.warning("没有记录可导出")
@@ -298,6 +296,7 @@ if export_all_clicked:
                 st.success("打包完成，点击上方按钮下载")
             else:
                 st.error("导出失败")
+
 if export_filtered_clicked:
     if filtered_df.empty:
         st.warning("当前筛选结果为空，无法导出")
@@ -312,7 +311,7 @@ if export_filtered_clicked:
             else:
                 st.error("导出失败")
 
-# 表格显示记录（与之前代码相同，略）
+# 表格显示记录
 if not filtered_df.empty:
     header_cols = st.columns([1, 1, 1, 1, 1, 1, 1.5, 0.6, 0.6, 0.6])
     header_cols[0].write("**单号**")
@@ -326,6 +325,7 @@ if not filtered_df.empty:
     header_cols[8].write("**编辑**")
     header_cols[9].write("**删除**")
     st.markdown("---")
+
     for idx, row in filtered_df.iterrows():
         record_id = row["id"]
         files_list = row['files_list']
@@ -338,6 +338,7 @@ if not filtered_df.empty:
         cols[4].write(row["涉及物料"])
         cols[5].write(row["处理情况"])
         cols[6].write(display_names)
+        
         detail_expanded = cols[7].checkbox("📂", key=f"detail_check_{record_id}", label_visibility="collapsed")
         if cols[8].button("✏️", key=f"edit_btn_{record_id}"):
             st.session_state[f"editing_{record_id}"] = not st.session_state.get(f"editing_{record_id}", False)
@@ -352,6 +353,7 @@ if not filtered_df.empty:
                 st.success("删除成功")
                 st.session_state.pop(confirm_key, None)
                 st.rerun()
+        
         if detail_expanded:
             with st.expander(f"文件详情（共 {len(files_list)} 个）", expanded=True):
                 for i, f in enumerate(files_list):
@@ -376,6 +378,7 @@ if not filtered_df.empty:
                                 preview_file_from_cloud(object_key, filename)
                     else:
                         st.info("文字记录，无文件")
+        
         if st.session_state.get(f"editing_{record_id}", False):
             with st.expander(f"编辑记录 #{record_id}", expanded=True):
                 with st.form(key=f"form_edit_{record_id}"):
