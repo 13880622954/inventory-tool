@@ -1,40 +1,66 @@
 import streamlit as st
 import pandas as pd
 import json
+import os
 import tempfile
 import zipfile
-import os
 from datetime import datetime
 import mimetypes
 import base64
-from supabase import create_client, Client
+import pymysql
+import boto3
+from botocore.client import Config
 
-# ========== 配置 ==========
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+# ========== 从 Streamlit Secrets 读取配置 ==========
+DB_HOST = st.secrets["DB_HOST"]
+DB_PORT = int(st.secrets.get("DB_PORT", 4000))
+DB_USER = st.secrets["DB_USER"]
+DB_PASSWORD = st.secrets["DB_PASSWORD"]
+DB_NAME = st.secrets.get("DB_NAME", "test")
 
+S3_ENDPOINT = st.secrets["S3_ENDPOINT"]
+S3_ACCESS_KEY = st.secrets["S3_ACCESS_KEY"]
+S3_SECRET_KEY = st.secrets["S3_SECRET_KEY"]
+S3_BUCKET = st.secrets["S3_BUCKET"]
+S3_SECURE = st.secrets.get("S3_SECURE", "true").lower() == "true"
+
+# ========== 数据库连接 ==========
 @st.cache_resource
-def get_supabase() -> Client:
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+def get_db_connection():
+    return pymysql.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=DB_NAME,
+        charset='utf8mb4',
+        cursorclass=pymysql.cursors.DictCursor
+    )
 
-supabase = get_supabase()
+# ========== S3 客户端（七牛云） ==========
+@st.cache_resource
+def get_s3_client():
+    return boto3.client(
+        's3',
+        endpoint_url=S3_ENDPOINT,
+        aws_access_key_id=S3_ACCESS_KEY,
+        aws_secret_access_key=S3_SECRET_KEY,
+        config=Config(signature_version='s3v4'),
+        use_ssl=S3_SECURE
+    )
 
-# 存储桶名称（请确认已创建）
-BUCKET_NAME = "files"
-
-# 确保存储桶存在（如果不存在，会自动创建，但需要用户先手动创建一次）
-try:
-    supabase.storage.get_bucket(BUCKET_NAME)
-except:
-    supabase.storage.create_bucket(BUCKET_NAME, {"public": False})
+s3_client = get_s3_client()
 
 # ========== 数据库操作函数 ==========
 def load_data():
-    response = supabase.table("records").select("*").order("upload_time", desc=True).execute()
-    data = response.data
-    if not data:
+    conn = get_db_connection()
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, danhao, event, remark, warehouse, material, status, files_info, upload_time FROM records ORDER BY upload_time DESC")
+        rows = cur.fetchall()
+    conn.close()
+    if not rows:
         return pd.DataFrame()
-    df = pd.DataFrame(data)
+    df = pd.DataFrame(rows)
     def parse_files(x):
         if x:
             try:
@@ -56,41 +82,42 @@ def load_data():
     return df
 
 def add_record(danhao, event, remark, warehouse, material, status, files_list):
-    now = datetime.now().isoformat()
+    conn = get_db_connection()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     files_json = json.dumps(files_list, ensure_ascii=False)
-    supabase.table("records").insert({
-        "danhao": danhao,
-        "event": event,
-        "remark": remark,
-        "warehouse": warehouse,
-        "material": material,
-        "status": status,
-        "files_info": files_json,
-        "upload_time": now
-    }).execute()
+    with conn.cursor() as cur:
+        cur.execute('''
+            INSERT INTO records (danhao, event, remark, warehouse, material, status, files_info, upload_time)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ''', (danhao, event, remark, warehouse, material, status, files_json, now))
+        conn.commit()
+    conn.close()
 
 def update_record(record_id, danhao, event, remark, warehouse, material, status, files_list):
+    conn = get_db_connection()
     files_json = json.dumps(files_list, ensure_ascii=False)
-    supabase.table("records").update({
-        "danhao": danhao,
-        "event": event,
-        "remark": remark,
-        "warehouse": warehouse,
-        "material": material,
-        "status": status,
-        "files_info": files_json
-    }).eq("id", record_id).execute()
+    with conn.cursor() as cur:
+        cur.execute('''
+            UPDATE records SET danhao=%s, event=%s, remark=%s, warehouse=%s, material=%s, status=%s, files_info=%s WHERE id=%s
+        ''', (danhao, event, remark, warehouse, material, status, files_json, record_id))
+        conn.commit()
+    conn.close()
 
 def delete_record(record_id, files_list):
     for f in files_list:
         object_key = f.get('object_key')
         if object_key:
             try:
-                supabase.storage.from_(BUCKET_NAME).remove([object_key])
+                s3_client.delete_object(Bucket=S3_BUCKET, Key=object_key)
             except Exception as e:
                 st.error(f"删除文件失败: {e}")
-    supabase.table("records").delete().eq("id", record_id).execute()
+    conn = get_db_connection()
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM records WHERE id=%s", (record_id,))
+        conn.commit()
+    conn.close()
 
+# ========== 导出功能 ==========
 def export_to_zip(df, label):
     if df.empty:
         st.warning("没有数据可导出")
@@ -107,12 +134,10 @@ def export_to_zip(df, label):
             if not object_key:
                 continue
             try:
-                file_data = supabase.storage.from_(BUCKET_NAME).download(object_key)
                 target_subdir = os.path.join(temp_dir, danhao)
                 os.makedirs(target_subdir, exist_ok=True)
                 target_file = os.path.join(target_subdir, f['filename'])
-                with open(target_file, "wb") as f_out:
-                    f_out.write(file_data)
+                s3_client.download_file(S3_BUCKET, object_key, target_file)
             except Exception as e:
                 st.warning(f"无法下载文件 {f['filename']}: {e}")
     zip_path = os.path.join(temp_dir, f"{label}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip")
@@ -126,14 +151,13 @@ def export_to_zip(df, label):
                 zf.write(full_path, arcname)
     return zip_path
 
-def preview_file_from_storage(object_key, filename):
+def preview_file_from_cloud(object_key, filename):
     if not object_key:
         st.warning("无文件")
         return
     try:
-        file_data = supabase.storage.from_(BUCKET_NAME).download(object_key)
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
-            tmp.write(file_data)
+            s3_client.download_fileobj(S3_BUCKET, object_key, tmp)
             tmp_path = tmp.name
         mime, _ = mimetypes.guess_type(filename)
         if mime is None:
@@ -159,9 +183,9 @@ def preview_file_from_storage(object_key, filename):
 
 # ========== Streamlit UI ==========
 st.set_page_config(page_title="文件管理助手", layout="wide")
-st.title("📁 文件管理助手 - Supabase 版")
+st.title("📁 文件管理助手 - 云版（TiDB + 七牛云）")
 
-# 侧边栏表单
+# 侧边栏：添加新记录
 with st.sidebar:
     st.header("➕ 添加新记录")
     with st.form("upload_form", clear_on_submit=True):
@@ -184,8 +208,7 @@ with st.sidebar:
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                         object_key = f"uploads/{timestamp}_{uploaded_file.name}"
                         try:
-                            # 上传到 Supabase Storage
-                            supabase.storage.from_(BUCKET_NAME).upload(object_key, uploaded_file.getvalue())
+                            s3_client.upload_fileobj(uploaded_file, S3_BUCKET, object_key)
                             files_list.append({"filename": uploaded_file.name, "object_key": object_key})
                         except Exception as e:
                             st.error(f"上传文件 {uploaded_file.name} 失败: {e}")
@@ -199,7 +222,7 @@ with st.sidebar:
                 st.success(f"✅ 已保存记录，包含 {len(files_list)} 个文件/文字项！")
                 st.rerun()
 
-# 筛选区域（与原代码相同）
+# 筛选区域
 st.subheader("🔍 筛选记录")
 st.caption("多个条件同时满足（AND），模糊匹配")
 
@@ -241,11 +264,13 @@ if reset_clicked:
             st.session_state[key] = ""
     st.rerun()
 
+# 加载数据
 df = load_data()
 if df.empty:
     st.info("📭 暂无记录，请从左侧添加。")
     st.stop()
 
+# 应用筛选
 mask = pd.Series([True] * len(df))
 if search_danhao:
     mask &= df["单号"].astype(str).str.contains(search_danhao, case=False, na=False)
@@ -267,7 +292,7 @@ if search_filename:
 filtered_df = df[mask]
 st.write(f"📊 共 **{len(filtered_df)}** 条记录")
 
-# 导出处理
+# 导出逻辑
 if export_all_clicked:
     if df.empty:
         st.warning("没有记录可导出")
@@ -346,18 +371,19 @@ if not filtered_df.empty:
                     if object_key:
                         col_dl, col_pv = st.columns(2)
                         with col_dl:
-                            # 生成临时下载链接（有效期1小时）
                             try:
-                                # Supabase Storage 生成签名 URL 的方法略有不同，这里使用 get_public_url 对于私有桶需要授权
-                                # 对于私有桶，可以使用 create_signed_url 方法
-                                signed_url = supabase.storage.from_(BUCKET_NAME).create_signed_url(object_key, 3600)
-                                st.markdown(f"[⬇️ 下载]({signed_url})")
-                            except Exception as e:
-                                st.write(f"生成链接失败: {e}")
+                                url = s3_client.generate_presigned_url(
+                                    ClientMethod='get_object',
+                                    Params={'Bucket': S3_BUCKET, 'Key': object_key},
+                                    ExpiresIn=3600
+                                )
+                                st.markdown(f"[⬇️ 下载]({url})")
+                            except:
+                                st.write("下载链接生成失败")
                         with col_pv:
                             preview_key = f"preview_check_{record_id}_{i}"
                             if st.checkbox("👁️ 预览", key=preview_key):
-                                preview_file_from_storage(object_key, filename)
+                                preview_file_from_cloud(object_key, filename)
                     else:
                         st.info("文字记录，无文件")
         if st.session_state.get(f"editing_{record_id}", False):
