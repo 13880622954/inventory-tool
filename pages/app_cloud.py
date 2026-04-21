@@ -11,7 +11,7 @@ import pymysql
 import boto3
 from botocore.client import Config
 
-# ========== 从 Streamlit Secrets 读取配置 ==========
+# ========== 配置 ==========
 DB_HOST = st.secrets["DB_HOST"]
 DB_PORT = int(st.secrets.get("DB_PORT", 4000))
 DB_USER = st.secrets["DB_USER"]
@@ -24,7 +24,6 @@ S3_SECRET_KEY = st.secrets["S3_SECRET_KEY"]
 S3_BUCKET = st.secrets["S3_BUCKET"]
 S3_SECURE = st.secrets.get("S3_SECURE", "true").lower() == "true"
 
-# ========== 数据库连接 ==========
 @st.cache_resource
 def get_db_connection():
     return pymysql.connect(
@@ -35,10 +34,9 @@ def get_db_connection():
         database=DB_NAME,
         charset='utf8mb4',
         cursorclass=pymysql.cursors.DictCursor,
-        ssl={'ca': None}   # 禁用 SSL 验证，解决 TiDB Cloud 连接问题
+        ssl={'ca': None}
     )
 
-# ========== S3 客户端（七牛云） ==========
 @st.cache_resource
 def get_s3_client():
     return boto3.client(
@@ -52,7 +50,6 @@ def get_s3_client():
 
 s3_client = get_s3_client()
 
-# ========== 数据库操作函数 ==========
 def load_data():
     conn = get_db_connection()
     with conn.cursor() as cur:
@@ -110,15 +107,14 @@ def delete_record(record_id, files_list):
         if object_key:
             try:
                 s3_client.delete_object(Bucket=S3_BUCKET, Key=object_key)
-            except Exception as e:
-                st.error(f"删除文件失败: {e}")
+            except:
+                pass
     conn = get_db_connection()
     with conn.cursor() as cur:
         cur.execute("DELETE FROM records WHERE id=%s", (record_id,))
         conn.commit()
     conn.close()
 
-# ========== 导出功能 ==========
 def export_to_zip(df, label):
     if df.empty:
         st.warning("没有数据可导出")
@@ -139,8 +135,8 @@ def export_to_zip(df, label):
                 os.makedirs(target_subdir, exist_ok=True)
                 target_file = os.path.join(target_subdir, f['filename'])
                 s3_client.download_file(S3_BUCKET, object_key, target_file)
-            except Exception as e:
-                st.warning(f"无法下载文件 {f['filename']}: {e}")
+            except:
+                pass
     zip_path = os.path.join(temp_dir, f"{label}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip")
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         for root, _, files in os.walk(temp_dir):
@@ -182,11 +178,9 @@ def preview_file_from_cloud(object_key, filename):
     except Exception as e:
         st.error(f"预览失败: {e}")
 
-# ========== Streamlit UI ==========
 st.set_page_config(page_title="文件管理助手", layout="wide")
-st.title("📁 文件管理助手 - 云版（TiDB + 七牛云）")
+st.title("📁 文件管理助手 - 云版")
 
-# 侧边栏：添加新记录
 with st.sidebar:
     st.header("➕ 添加新记录")
     with st.form("upload_form", clear_on_submit=True):
@@ -223,7 +217,6 @@ with st.sidebar:
                 st.success(f"✅ 已保存记录，包含 {len(files_list)} 个文件/文字项！")
                 st.rerun()
 
-# 筛选区域
 st.subheader("🔍 筛选记录")
 st.caption("多个条件同时满足（AND），模糊匹配")
 
@@ -265,13 +258,11 @@ if reset_clicked:
             st.session_state[key] = ""
     st.rerun()
 
-# 加载数据
 df = load_data()
 if df.empty:
     st.info("📭 暂无记录，请从左侧添加。")
     st.stop()
 
-# 应用筛选
 mask = pd.Series([True] * len(df))
 if search_danhao:
     mask &= df["单号"].astype(str).str.contains(search_danhao, case=False, na=False)
@@ -293,7 +284,6 @@ if search_filename:
 filtered_df = df[mask]
 st.write(f"📊 共 **{len(filtered_df)}** 条记录")
 
-# 导出逻辑
 if export_all_clicked:
     if df.empty:
         st.warning("没有记录可导出")
@@ -307,7 +297,6 @@ if export_all_clicked:
                 st.success("打包完成，点击上方按钮下载")
             else:
                 st.error("导出失败")
-
 if export_filtered_clicked:
     if filtered_df.empty:
         st.warning("当前筛选结果为空，无法导出")
@@ -322,7 +311,6 @@ if export_filtered_clicked:
             else:
                 st.error("导出失败")
 
-# 表格显示记录
 if not filtered_df.empty:
     header_cols = st.columns([1, 1, 1, 1, 1, 1, 1.5, 0.6, 0.6, 0.6])
     header_cols[0].write("**单号**")
@@ -336,7 +324,6 @@ if not filtered_df.empty:
     header_cols[8].write("**编辑**")
     header_cols[9].write("**删除**")
     st.markdown("---")
-
     for idx, row in filtered_df.iterrows():
         record_id = row["id"]
         files_list = row['files_list']
