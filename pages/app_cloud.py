@@ -34,7 +34,8 @@ def get_db_connection():
         password=DB_PASSWORD,
         database=DB_NAME,
         charset='utf8mb4',
-        cursorclass=pymysql.cursors.DictCursor
+        cursorclass=pymysql.cursors.DictCursor,
+        ssl={'ca': None}   # 禁用 SSL 验证，解决 TiDB Cloud 连接问题
     )
 
 # ========== S3 客户端（七牛云） ==========
