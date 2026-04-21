@@ -475,23 +475,22 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
         unmatched_receive['数量_调整'] = unmatched_receive[COL_QTY_WMS]
         unmatched_receive['记录类型'] = '收货'
 
-    # ========== 有效单号（用于展示） ==========
+    # ========== 有效单号（修改：所有非空单号均为有效，不再排除4/01开头） ==========
     def get_effective_order(row):
         lrp = clean_str(row[COL_ORDER_WMS])
         if lrp != '':
             return lrp
         else:
             common = clean_str(row[COL_COMMON_NO])
-            if common != '' and not is_start_with_4(common) and not is_start_with_01(common):
-                return common
-            else:
-                return ''
+            # 只要单号非空就返回，确保采购订单号/其他单号都能保留
+            return common if common != '' else ''
 
     for df_temp in [unmatched_out, unmatched_cancel, unmatched_receive]:
         if not df_temp.empty:
             df_temp['有效单号'] = df_temp.apply(get_effective_order, axis=1)
             df_temp['原始LRP'] = df_temp[COL_ORDER_WMS].apply(clean_str)
 
+    # 此时过滤条件改为仅过滤有效单号为空的记录（即单号和LRP都为空）
     unmatched_out = unmatched_out[unmatched_out['有效单号'] != ''] if not unmatched_out.empty else unmatched_out
     unmatched_cancel = unmatched_cancel[unmatched_cancel['有效单号'] != ''] if not unmatched_cancel.empty else unmatched_cancel
     unmatched_receive = unmatched_receive[unmatched_receive['有效单号'] != ''] if not unmatched_receive.empty else unmatched_receive
@@ -614,10 +613,7 @@ def process_data(df_wms, df_r3, df_sales, df_target, df_rdc, skip_rdc_match):
                 return lrp
             else:
                 common = clean_str(row[COL_COMMON_NO])
-                if common != '' and not is_start_with_4(common) and not is_start_with_01(common):
-                    return common
-                else:
-                    return ''
+                return common if common != '' else ''
         all_matched['有效单号'] = all_matched.apply(get_effective_order_matched, axis=1)
         all_matched['数量_调整'] = all_matched.apply(lambda r: adjust_qty(r, 'out') if r[COL_TRANS_TYPE]=='出库' else r[COL_QTY_WMS], axis=1)
         all_matched['记录类型'] = all_matched[COL_TRANS_TYPE]
@@ -938,4 +934,5 @@ with st.expander("📖 使用说明", expanded=False):
     - **数量调整**：仅出库且LRP为空时数量除以2。
     - **调整后差异**：正差异减净未匹配量，负差异加净未匹配量。
     - **系统API保管员**：仅保留收货且LRP空、单号不以01/4开头的记录，其余系统API记录删除。
+    - **未匹配记录保留规则**：所有未匹配且有效单号（LRP单号或单号）非空的记录均会保留，包括以4或01开头的单号。
     """)
