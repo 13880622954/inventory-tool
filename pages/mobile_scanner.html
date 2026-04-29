@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>条码收集器</title>
+    <script src="https://unpkg.com/@zxing/library@0.19.3/umd/index.min.js"></script>
+    <style>
+        body { margin: 0; background: #000; font-family: system-ui, sans-serif; color: #fff; }
+        #video { width: 100%; height: auto; display: block; }
+        #status { position: fixed; bottom: 80px; width: 100%; text-align: center;
+                  background: rgba(0,0,0,0.6); padding: 10px; font-size: 14px; }
+        #count { position: fixed; top: 10px; right: 10px; background: #4f46e5;
+                 padding: 8px 15px; border-radius: 20px; font-size: 16px; z-index: 10; }
+        #btns { position: fixed; bottom: 10px; width: 100%; display: flex;
+                justify-content: center; gap: 10px; flex-wrap: wrap; }
+        button { background: #4f46e5; color: white; border: none; padding: 12px 20px;
+                  border-radius: 8px; font-size: 16px; margin: 5px; }
+        .green-btn { background: #38a169; }
+        .red-btn { background: #e53e3e; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div id="count">0</div>
+    <video id="video" autoplay playsinline class="hidden"></video>
+    <div id="status">点击下方按钮，授权摄像头后开始扫码</div>
+    <div id="btns">
+        <button id="startBtn" onclick="startScanner()">📷 启动摄像头</button>
+        <button id="exportBtn" class="green-btn hidden" onclick="exportData()">📤 导出 (JSON)</button>
+        <button id="clearBtn" class="red-btn hidden" onclick="clearData()">🗑️ 清空</button>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const statusDiv = document.getElementById('status');
+        const countDiv = document.getElementById('count');
+        const startBtn = document.getElementById('startBtn');
+        const exportBtn = document.getElementById('exportBtn');
+        const clearBtn = document.getElementById('clearBtn');
+
+        let barcodes = JSON.parse(localStorage.getItem('barcodes') || '[]');
+        let codeReader = null;
+
+        updateCount();
+
+        function startScanner() {
+            // 请求摄像头（不做分辨率限制，避免兼容问题）
+            navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'environment' }
+            }).then(stream => {
+                video.srcObject = stream;
+                video.classList.remove('hidden');
+                startBtn.classList.add('hidden');
+                exportBtn.classList.remove('hidden');
+                clearBtn.classList.remove('hidden');
+                statusDiv.innerHTML = '正在初始化识别引擎...';
+                video.play();
+
+                // 初始化 zxing 阅读器
+                codeReader = new ZXing.BrowserMultiFormatReader();
+                console.log('ZXing reader created');
+
+                // 开始连续解码
+                codeReader.decodeFromVideoDevice(null, video, (result, err) => {
+                    if (result) {
+                        const text = result.getText();
+                        if (!barcodes.includes(text)) {
+                            barcodes.push(text);
+                            localStorage.setItem('barcodes', JSON.stringify(barcodes));
+                            statusDiv.innerHTML = '✅ 已收藏：' + text;
+                            updateCount();
+                            // 短暂暂停识别，避免重复
+                            codeReader.reset();
+                            setTimeout(() => {
+                                if (codeReader) {
+                                    codeReader.decodeFromVideoDevice(null, video, (result, err) => {
+                                        // 重新绑定回调
+                                        if (result) {
+                                            const text2 = result.getText();
+                                            if (!barcodes.includes(text2)) {
+                                                barcodes.push(text2);
+                                                localStorage.setItem('barcodes', JSON.stringify(barcodes));
+                                                statusDiv.innerHTML = '✅ 已收藏：' + text2;
+                                                updateCount();
+                                                codeReader.reset();
+                                                setTimeout(() => startScanning(), 2000);
+                                            }
+                                        }
+                                    });
+                                }
+                            }, 2000);
+                        }
+                    }
+                    if (err && !(err instanceof ZXing.NotFoundException)) {
+                        console.error(err);
+                    }
+                });
+                statusDiv.innerHTML = '等待扫码...';
+            }).catch(err => {
+                statusDiv.innerHTML = '❌ 摄像头错误：' + err.message + '<br>请确保：<br>1. 使用系统浏览器（Safari/Chrome）<br>2. 在系统设置中允许浏览器使用摄像头<br>3. 使用 HTTPS 访问此页面';
+            });
+        }
+
+        function updateCount() {
+            countDiv.textContent = barcodes.length;
+        }
+
+        function exportData() {
+            const jsonStr = JSON.stringify(barcodes, null, 2);
+            const blob = new Blob([jsonStr], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'barcodes_collected.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            statusDiv.innerHTML = '📥 下载已开始，请检查手机下载目录。';
+        }
+
+        function clearData() {
+            if (confirm('确定清空所有已收集条码？')) {
+                barcodes = [];
+                localStorage.setItem('barcodes', '[]');
+                updateCount();
+                statusDiv.innerHTML = '已清空。点击“启动摄像头”重新开始。';
+            }
+        }
+    </script>
+</body>
+</html>
