@@ -3,7 +3,7 @@
 使用方法：streamlit run barcode_batch_printer.py
 """
 
-import io, base64, zipfile
+1import io, base64, zipfile
 import streamlit as st
 import barcode
 from barcode.writer import ImageWriter
