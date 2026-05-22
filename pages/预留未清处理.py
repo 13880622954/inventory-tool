@@ -10,7 +10,6 @@ TARGET_WAREHOUSES = [
     "绵阳库", "南昌库", "南充库", "南京库", "南宁库", "沈阳库", "石家庄库",
     "太原库", "天津库", "武汉库", "乌鲁木齐库", "无锡库", "西安库", "郑州库", "重庆库"
 ]
-# 两个业务都需要排除的存储位置/库存地
 EXCLUDE_STORAGE_LOC = ["HF0C", "N57S", "N22P"]
 
 st.set_page_config(page_title="多类型数据清洗", layout="wide")
@@ -22,7 +21,6 @@ def read_uploaded_file(uploaded_file, sheet_name=0):
     if fname.endswith('.csv'):
         return pd.read_csv(uploaded_file)
     else:
-        # 依次尝试不同引擎，兼容各种Excel格式
         for engine in [None, 'openpyxl', 'xlrd']:
             try:
                 return pd.read_excel(uploaded_file, sheet_name=sheet_name, engine=engine)
@@ -84,6 +82,21 @@ def load_location_mapping(main_file, loc_file):
     df_loc["仓库"] = df_loc["仓库"].astype(str).str.strip()
     return df_loc
 
+# ========== 日期过滤辅助函数 ==========
+def filter_out_two_months(df, date_col_name):
+    """删除 date_col_name 列距当前日期前后2个月内的行"""
+    df[date_col_name] = pd.to_datetime(df[date_col_name], errors="coerce")
+    before_drop = len(df)
+    df = df.dropna(subset=[date_col_name])
+    after_drop_na = len(df)
+    if before_drop - after_drop_na > 0:
+        st.warning(f"⚠️ {date_col_name}列中有{ before_drop - after_drop_na }个无效日期，已自动删除。")
+    today = pd.Timestamp(datetime.now().date())
+    two_months_ago = today - pd.DateOffset(months=2)
+    two_months_later = today + pd.DateOffset(months=2)
+    df = df[(df[date_col_name] < two_months_ago) | (df[date_col_name] > two_months_later)]
+    return df
+
 # ========== 预留未清处理 ==========
 def process_resv_data(df_main, df_loc):
     required = ["需求日期", "差额数量", "存储位置", "预留编号"]
@@ -100,12 +113,7 @@ def process_resv_data(df_main, df_loc):
     df_main = df_main[df_main["差额数量"] != 0]
 
     # 3. 删除两个月内的需求日期
-    df_main["需求日期"] = pd.to_datetime(df_main["需求日期"], errors="coerce")
-    df_main = df_main.dropna(subset=["需求日期"])
-    today = pd.Timestamp(datetime.now().date())
-    two_months_ago = today - pd.DateOffset(months=2)
-    two_months_later = today + pd.DateOffset(months=2)
-    df_main = df_main[(df_main["需求日期"] < two_months_ago) | (df_main["需求日期"] > two_months_later)]
+    df_main = filter_out_two_months(df_main, "需求日期")
 
     # 4. 匹配库位
     store_col = "存储位置"
@@ -133,17 +141,20 @@ def build_resv_summary(df):
 
 # ========== 销售未清处理 ==========
 def process_sales_data(df_main, df_loc):
-    required = ["库存地", "交货号"]
+    required = ["交货日期", "库存地", "交货号"]
     missing = [c for c in required if c not in df_main.columns]
     if missing:
         st.error(f"❌ 销售未清文件缺少必需列：{missing}")
         return None
 
-    # 1. 删除 HF0C / N57S （新增规则）
+    # 1. 删除 HF0C / N57S
     mask = df_main["库存地"].astype(str).str.strip().isin(EXCLUDE_STORAGE_LOC)
     df_main = df_main[~mask]
 
-    # 2. 匹配库位
+    # 2. 删除两个月内的交货日期
+    df_main = filter_out_two_months(df_main, "交货日期")
+
+    # 3. 匹配库位
     store_col = "库存地"
     idx = df_main.columns.get_loc(store_col)
     df_main.insert(idx + 1, "库位描述", pd.NA)
@@ -153,7 +164,7 @@ def process_sales_data(df_main, df_loc):
     merged.drop(columns=["_key", "库位", "仓库"], inplace=True, errors="ignore")
     df_main = merged
 
-    # 3. 仅保留目标仓库
+    # 4. 仅保留目标仓库
     df_main["库位描述"] = df_main["库位描述"].astype(str).str.strip()
     df_main = df_main[df_main["库位描述"].isin(TARGET_WAREHOUSES)]
     df_main.reset_index(drop=True, inplace=True)
