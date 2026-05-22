@@ -39,7 +39,7 @@ def process_data(main_file, loc_file):
         return None
 
     df_main.columns = df_main.columns.str.strip()
-    required_cols = ["需求日期", "差额数量", "存储位置"]
+    required_cols = ["需求日期", "差额数量", "存储位置", "预留编号"]
     missing = [col for col in required_cols if col not in df_main.columns]
     if missing:
         st.error(f"❌ 文件缺少必需列：{missing}")
@@ -103,6 +103,22 @@ def process_data(main_file, loc_file):
     df_main.reset_index(drop=True, inplace=True)
     return df_main
 
+def build_summary(df):
+    """生成库位汇总 DataFrame：列出全部29个库位，统计不重复预留编号个数，无数据留空"""
+    # 统计每个库位描述的不重复预留编号个数
+    stats = df.groupby("库位描述")["预留编号"].nunique().reset_index()
+    stats.columns = ["库位描述", "预留单号数量"]
+
+    # 构建包含所有目标库位的骨架
+    all_warehouses_df = pd.DataFrame({"库位描述": TARGET_WAREHOUSES})
+
+    # 左连接，缺失值填充为空白（NaN）
+    summary = all_warehouses_df.merge(stats, on="库位描述", how="left")
+    summary["预留单号数量"] = summary["预留单号数量"].apply(
+        lambda x: "" if pd.isna(x) else int(x)
+    )
+    return summary
+
 # ---------- 主界面逻辑 ----------
 if main_file is not None:
     st.button("🚀 开始处理", type="primary", on_click=lambda: st.session_state.update(process_clicked=True))
@@ -114,13 +130,19 @@ if main_file is not None:
             st.success(f"🎉 处理完成！最终行数：{len(result_df)}")
             st.subheader("📋 处理结果预览")
             st.dataframe(result_df)
-            # 生成下载
+
+            # 生成汇总表
+            summary_df = build_summary(result_df)
+
+            # 准备 Excel 下载（两个工作表）
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 result_df.to_excel(writer, index=False, sheet_name='清洗后数据')
+                summary_df.to_excel(writer, index=False, sheet_name='库位汇总')
             output.seek(0)
+
             st.download_button(
-                label="📥 下载处理后的 Excel 文件",
+                label="📥 下载处理后的 Excel 文件（含汇总）",
                 data=output,
                 file_name="processed_data.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
