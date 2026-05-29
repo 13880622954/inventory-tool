@@ -9,3 +9,4 @@ pymysql
 streamlit>=1.25
 python-barcode>=0.15
 Pillow>=9.0
+python-docx
