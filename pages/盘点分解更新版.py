@@ -50,8 +50,6 @@ def assign_age_bucket(days, qty):
 
 # ---------- 核心处理 ----------
 def process_files(ib00_bytes, location_bytes, age_bytes, template_bytes, age_gift_bytes=None):
-    debug = {}
-
     # 1. 读取文件
     df_ib00 = pd.read_excel(io.BytesIO(ib00_bytes))
     df_phys = pd.read_excel(io.BytesIO(location_bytes), sheet_name="实物库位表")
@@ -81,13 +79,11 @@ def process_files(ib00_bytes, location_bytes, age_bytes, template_bytes, age_gif
         "1-2年库龄":"sum","2-3年库龄":"sum","3年以上库龄":"sum","10年以上库龄":"sum"
     })
 
-    # 4. 赠品库龄（增强处理）
+    # 4. 赠品库龄
     age_summary_gift = None
     if age_gift_bytes is not None:
         df_age_gift = pd.read_excel(io.BytesIO(age_gift_bytes), sheet_name=0)
         df_age_gift.columns = [str(c).strip() for c in df_age_gift.columns]
-        debug["赠品库龄表原始列名"] = list(df_age_gift.columns)
-
         gift_rename = {"物料":"物料代码","库存地":"库位","批次":"产品等级"}
         df_age_gift.rename(columns=gift_rename, inplace=True)
         for c in ["物料代码","工厂","库位","产品等级"]:
@@ -109,39 +105,24 @@ def process_files(ib00_bytes, location_bytes, age_bytes, template_bytes, age_gif
         df_age_gift["3年以上库龄"] = df_age_gift["3年以上"]
         df_age_gift["10年以上库龄"] = 0
 
-        # ===== 关键修复：统一物料代码为字符串 =====
+        # 物料代码统一为字符串
         df_age_gift["物料代码"] = df_age_gift["物料代码"].astype(str).str.strip()
 
         age_summary_gift = df_age_gift.groupby(["物料代码","工厂","库位","产品等级"], as_index=False).agg({
             "3个月库龄":"sum","4-6个月库龄":"sum","7-12个月库龄":"sum",
             "1-2年库龄":"sum","2-3年库龄":"sum","3年以上库龄":"sum","10年以上库龄":"sum"
         })
-
-        # 确保汇总后物料代码也是字符串
         age_summary_gift["物料代码"] = age_summary_gift["物料代码"].astype(str).str.strip()
 
-        # 诊断
-        target = age_summary_gift[age_summary_gift["物料代码"] == "890468227"]
-        if not target.empty:
-            debug["赠品库龄汇总中890468227"] = target.to_dict(orient='records')[0]
-        else:
-            debug["赠品库龄汇总中890468227"] = "未找到该物料"
-        debug["赠品库龄汇总(前10行)"] = age_summary_gift.head(10)
-
-    # 5. 合并 IB00 与库龄
+    # 5. 合并
     if "产品等级" not in df_ib00.columns:
         df_ib00["产品等级"] = df_ib00.get("批次", "")
     df_ib00.rename(columns={"存储位置":"库位"}, inplace=True)
-
-    # ===== 关键修复：IB00 物料代码也统一为字符串 =====
     df_ib00["物料代码"] = df_ib00["物料代码"].astype(str).str.strip()
-
     df_ib00["库位_str"] = df_ib00["库位"].astype(str).apply(clean_str)
     mask_gift = df_ib00["库位_str"].str.endswith("6")
     df_fin = df_ib00[~mask_gift].copy()
     df_gift = df_ib00[mask_gift].copy()
-
-    debug["IB00中890468227"] = df_gift[df_gift["物料代码"] == "890468227"][["物料代码","工厂","库位","产品等级"]].to_dict(orient='records')
 
     merge_keys = ["物料代码","工厂","库位","产品等级"]
     df_fin = pd.merge(df_fin, age_summary_main, on=merge_keys, how="left")
@@ -149,10 +130,6 @@ def process_files(ib00_bytes, location_bytes, age_bytes, template_bytes, age_gif
         df_gift = pd.merge(df_gift, age_summary_gift, on=merge_keys, how="left")
     else:
         df_gift = pd.merge(df_gift, age_summary_main, on=merge_keys, how="left")
-
-    target_merged = df_gift[df_gift["物料代码"] == "890468227"]
-    if not target_merged.empty:
-        debug["合并后赠品中890468227"] = target_merged.to_dict(orient='records')[0]
 
     df_merged = pd.concat([df_fin, df_gift], ignore_index=True)
     df_merged.rename(columns={"库位":"存储位置"}, inplace=True)
@@ -257,8 +234,6 @@ def process_files(ib00_bytes, location_bytes, age_bytes, template_bytes, age_gif
             hdr = find_header_row(ws)
             start_row = hdr+2
             col_map = get_column_map(ws, hdr)
-            if sheet == "赠品":
-                debug["模板赠品工作表列名映射"] = col_map
 
             rows = []
             total_qty = 0
@@ -283,25 +258,6 @@ def process_files(ib00_bytes, location_bytes, age_bytes, template_bytes, age_gif
                             val = ""
                         rc[cnum-1] = val
                     rows.append(rc)
-
-                # 查找特定物料（已修复类型比较）
-                if sheet == "赠品":
-                    target_mat = "890468227"
-                    mat_col = next((cnum for cnum, cname in col_map.items() if cname == "物料代码"), None)
-                    if mat_col:
-                        found = False
-                        for r_idx, row_cells in enumerate(rows):
-                            cell_val = row_cells[mat_col-1]
-                            if str(cell_val).strip() == target_mat:
-                                row_data = {}
-                                for cnum, cname in col_map.items():
-                                    row_data[cname] = row_cells[cnum-1]
-                                debug[f"模板赠品表中{target_mat}的数据"] = row_data
-                                found = True
-                                break
-                        if not found:
-                            debug[f"模板赠品表中{target_mat}的数据"] = "未找到该行"
-
                 total_r = [None]*ws.max_column
                 for cnum, cname in col_map.items():
                     if cname == "库位名称": total_r[cnum-1] = "合计"
@@ -331,7 +287,7 @@ def process_files(ib00_bytes, location_bytes, age_bytes, template_bytes, age_gif
     pivot.to_excel(sum_bytes, index=False)
     output_files[f"{last_month}库存盘点汇总表.xlsx"] = sum_bytes.getvalue()
 
-    return output_files, debug
+    return output_files
 
 # ---------- UI ----------
 st.markdown("### 📤 上传文件")
@@ -350,7 +306,7 @@ if st.button("🚀 生成盘存分析表", type="primary", use_container_width=T
     else:
         with st.spinner("⏳ 处理中..."):
             try:
-                outputs, debug_info = process_files(
+                outputs = process_files(
                     f_ib00.read(), f_loc.read(), f_age.read(), f_tpl.read(),
                     f_age_gift.read() if f_age_gift else None
                 )
@@ -358,21 +314,6 @@ if st.button("🚀 生成盘存分析表", type="primary", use_container_width=T
                 st.session_state.output_files = outputs
                 st.session_state.error = None
                 st.success("✅ 完成！")
-
-                st.subheader("🔍 诊断信息")
-                if "赠品库龄汇总中890468227" in debug_info:
-                    st.write("**赠品库龄汇总中890468227**")
-                    st.json(debug_info["赠品库龄汇总中890468227"])
-                if "IB00中890468227" in debug_info:
-                    st.write("**IB00中890468227**")
-                    st.json(debug_info["IB00中890468227"])
-                if "合并后赠品中890468227" in debug_info:
-                    st.write("**合并后赠品中890468227**")
-                    st.json(debug_info["合并后赠品中890468227"])
-                if "模板赠品表中890468227的数据" in debug_info:
-                    st.write("**模板赠品表中890468227的数据**")
-                    st.json(debug_info["模板赠品表中890468227的数据"])
-
             except Exception as e:
                 st.session_state.processed = False
                 st.session_state.output_files = None
