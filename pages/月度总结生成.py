@@ -79,22 +79,11 @@ def load_excel_data(excel_file):
     abnormal = df_detail[df_detail['异常差异'] > 0]
     data['abnormal_list'] = abnormal.iloc[:, 0].tolist()
 
-    # 盘点成品和赠品
+    # 只读取盘点成品（不包含赠品）
     total_books = total_actual = total_in = total_out = 0
     substantive_diff = 0
     if '盘点成品' in wb.sheetnames:
         ws = wb['盘点成品']
-        for row in ws.iter_rows(min_row=3, max_row=ws.max_row, values_only=True):
-            if row[0] == '合计':
-                break
-            if row[1] and isinstance(row[1], (int, float)):
-                total_books += row[1]
-                total_actual += (row[6] or 0)
-                total_in += (row[2] or 0)
-                total_out += (row[3] or 0)
-                substantive_diff += (row[4] or 0) + (row[5] or 0)
-    if '盘点赠品' in wb.sheetnames:
-        ws = wb['盘点赠品']
         for row in ws.iter_rows(min_row=3, max_row=ws.max_row, values_only=True):
             if row[0] == '合计':
                 break
@@ -111,6 +100,14 @@ def load_excel_data(excel_file):
     data['substantive_diff'] = "无" if substantive_diff == 0 else f"盘盈{total_in}台，盘亏{total_out}台"
     data['diff_reason_stock'] = "1. C端订单因信用、价格问题未维护，客户代码冻结导致R3下账失败，其他异常原因导致R3下账失败"
 
+    # 当前日期和数据月份
+    current_date = datetime.now()
+    data_month = get_data_month(current_date)[1]
+    data['data_month'] = data_month
+    data['current_month'] = current_date.month
+    data['report_month'] = f"{current_date.year}年{get_data_month(current_date)[1]}月"
+    data['current_date'] = get_current_date()
+
     # I030未清
     i030_reserve_current = 0
     i030_sale_current = 0
@@ -124,16 +121,28 @@ def load_excel_data(excel_file):
     data['i030_reserve_current'] = i030_reserve_current
     data['i030_sale_current'] = i030_sale_current
 
-    # I030 处理数量和备注
-    if data['上月I030销售未清'] < i030_sale_current:
-        data['i030_sale_processed'] = i030_sale_current - data['上月I030销售未清']
-        data['i030_sale_note'] = ""
+    # I030 销售未清
+    if data['上月I030销售未清'] > i030_sale_current:
+        diff = data['上月I030销售未清'] - i030_sale_current
+        data['i030_sale_processed'] = diff
+        data['i030_sale_note'] = f"{data_month}月已处理{diff}单"
+    elif data['上月I030销售未清'] < i030_sale_current:
+        diff = i030_sale_current - data['上月I030销售未清']
+        data['i030_sale_processed'] = 0
+        data['i030_sale_note'] = f"增加{diff}个"
     else:
         data['i030_sale_processed'] = 0
-        data['i030_sale_note'] = f"增加{i030_sale_current - data['上月I030销售未清']}" if i030_sale_current > data['上月I030销售未清'] else ""
+        data['i030_sale_note'] = ""
+
+    # I030 预留未清
     if data['上月I030预留未清'] > i030_reserve_current:
+        diff = data['上月I030预留未清'] - i030_reserve_current
+        data['i030_reserve_processed'] = diff
+        data['i030_reserve_note'] = f"{data_month}月已处理{diff}单"
+    elif data['上月I030预留未清'] < i030_reserve_current:
+        diff = i030_reserve_current - data['上月I030预留未清']
         data['i030_reserve_processed'] = 0
-        data['i030_reserve_note'] = f"上月新增：{data['上月I030预留未清'] - i030_reserve_current}"
+        data['i030_reserve_note'] = f"增加{diff}个"
     else:
         data['i030_reserve_processed'] = 0
         data['i030_reserve_note'] = ""
@@ -151,11 +160,29 @@ def load_excel_data(excel_file):
     data['ib00_reserve_current'] = ib00_reserve_current
     data['ib00_sale_current'] = ib00_sale_current
 
-    data['ib00_sale_processed'] = 0
-    data['ib00_sale_note'] = "关于历史订单的跟进情况：太原2单、重庆1单石家庄1单已反馈给货源经理，反馈无法查到USO单号无法删除,目前暂时无法处理，2025年的订单为2单为OFC切换到EBOC系统时未清理现在已无法清理，"
+    # IB00 销售未清（保留原固定备注，追加处理信息）
+    base_note = "关于历史订单的跟进情况：太原2单、重庆1单石家庄1单已反馈给货源经理，反馈无法查到USO单号无法删除,目前暂时无法处理，2025年的订单为2单为OFC切换到EBOC系统时未清理现在已无法清理，"
+    if data['上月IB00销售未清'] > ib00_sale_current:
+        diff = data['上月IB00销售未清'] - ib00_sale_current
+        data['ib00_sale_processed'] = diff
+        data['ib00_sale_note'] = base_note + f"{data_month}月已处理{diff}单"
+    elif data['上月IB00销售未清'] < ib00_sale_current:
+        diff = ib00_sale_current - data['上月IB00销售未清']
+        data['ib00_sale_processed'] = 0
+        data['ib00_sale_note'] = base_note + f"增加{diff}个"
+    else:
+        data['ib00_sale_processed'] = 0
+        data['ib00_sale_note'] = base_note
+
+    # IB00 预留未清
     if data['上月IB00预留未清'] > ib00_reserve_current:
+        diff = data['上月IB00预留未清'] - ib00_reserve_current
+        data['ib00_reserve_processed'] = diff
+        data['ib00_reserve_note'] = f"{data_month}月已处理{diff}单"
+    elif data['上月IB00预留未清'] < ib00_reserve_current:
+        diff = ib00_reserve_current - data['上月IB00预留未清']
         data['ib00_reserve_processed'] = 0
-        data['ib00_reserve_note'] = f"4月新增{data['上月IB00预留未清'] - ib00_reserve_current}单"
+        data['ib00_reserve_note'] = f"增加{diff}个"
     else:
         data['ib00_reserve_processed'] = 0
         data['ib00_reserve_note'] = ""
@@ -167,7 +194,6 @@ def load_excel_data(excel_file):
         for row in ws.iter_rows(min_row=2, values_only=True):
             if len(row) < 4:
                 continue
-            kucun_desc = row[0]
             kucun_di = row[1]
             value_2m_above = row[3]
             if not kucun_di or not isinstance(value_2m_above, (int, float)):
@@ -271,13 +297,13 @@ def load_excel_data(excel_file):
                 if row[0] and len(row) >= 6:
                     code = str(row[2]) if row[2] else ''
                     last_dict[code] = {
-                        '库位': row[0],
-                        '库位描述': row[1],
-                        '物料代码': code,
-                        '批次': row[3],
-                        '库存': row[4],
-                        '进度': row[5] if row[5] else '',
-                        '新增库存': row[6] if len(row) > 6 else ''
+                        '库位': row[0] or '',
+                        '库位描述': row[1] or '',
+                        '物料代码': code or '',
+                        '批次': row[3] or '',
+                        '库存': row[4] if row[4] is not None else 0,
+                        '进度': row[5] or '',
+                        '新增库存': row[6] if len(row) > 6 and row[6] is not None else ''
                     }
         current_dict = {}
         if current_start:
@@ -289,11 +315,11 @@ def load_excel_data(excel_file):
                     code = str(row[0])
                     batch = row[6] if len(row) > 6 else ''
                     current_dict[code] = {
-                        '库位': row[3] if len(row) > 3 else '',
-                        '库位描述': row[5] if len(row) > 5 else '',
-                        '物料代码': code,
-                        '批次': batch,
-                        '库存': row[2] if len(row) > 2 else 0,
+                        '库位': row[3] if len(row) > 3 and row[3] is not None else '',
+                        '库位描述': row[5] if len(row) > 5 and row[5] is not None else '',
+                        '物料代码': code or '',
+                        '批次': batch or '',
+                        '库存': row[2] if len(row) > 2 and row[2] is not None else 0,
                         '进度': '',
                         '新增库存': ''
                     }
@@ -325,21 +351,9 @@ def load_excel_data(excel_file):
     data['issues_rows'] = issues_rows
 
     # 其他占位符
-    current_date = datetime.now()
-    data['data_month'] = get_data_month(current_date)[1]
-    data['current_month'] = current_date.month
-    data['report_month'] = f"{current_date.year}年{get_data_month(current_date)[1]}月"
-    data['current_date'] = get_current_date()
     data['abnormal_text'] = '；'.join([f"涉及区域{w}，因异常问题造成差异，处理情况：正在跟进处理。" for w in data['abnormal_list']]) or '无'
     data['create_order_num'] = '【请填写】'
     data['complement_num'] = '【请填写】'
-
-    # 调试输出
-    st.write("### 从Excel读取的关键数据")
-    st.write(f"- 机损台账行数: {len(data['jisun_rows'])}")
-    st.write(f"- 主要问题行数: {len(data['issues_rows'])}")
-    st.write(f"- 超期60天: 干线箱损库={data['overdue']['干线箱损库']}, 配送箱损库={data['overdue']['配送箱损库']}, 借用库={data['overdue']['借用库']}")
-    st.write(f"- 异常差异仓库: {data['abnormal_list']}")
 
     return data
 
@@ -349,8 +363,6 @@ def update_word_document(template_bytes, data):
     current_date = datetime.now()
     data_month = data['data_month']
     current_month = data['current_month']
-
-    st.write("### 开始替换占位符")
 
     # 普通占位符替换字典
     replacements = {
@@ -409,7 +421,6 @@ def update_word_document(template_bytes, data):
         for key, value in replacements.items():
             if key in para.text:
                 para.text = para.text.replace(key, value)
-                st.write(f"替换段落中的 {key}")
 
     # 替换表格中的占位符
     for table in doc.tables:
@@ -419,64 +430,50 @@ def update_word_document(template_bytes, data):
                     for key, value in replacements.items():
                         if key in para.text:
                             para.text = para.text.replace(key, value)
-                            st.write(f"替换表格中的 {key}")
 
-    # 处理机损台账：找到包含 {{jisun_rows}} 的表格行
-    jisun_found = False
+    # 处理机损台账
     for table in doc.tables:
+        rows_to_remove = []
         for i, row in enumerate(table.rows):
             for cell in row.cells:
                 if '{{jisun_rows}}' in cell.text:
-                    st.write("✅ 找到机损台账占位符，准备替换")
-                    jisun_found = True
-                    # 删除该行
-                    tbl = row._element.getparent()
-                    tbl.remove(row._element)
-                    # 添加数据行
-                    for item in data['jisun_rows']:
-                        new_row = table.add_row()
-                        new_row.cells[0].text = item.get('库位', '')
-                        new_row.cells[1].text = item.get('库位描述', '')
-                        new_row.cells[2].text = item.get('物料代码', '')
-                        new_row.cells[3].text = item.get('批次', '')
-                        new_row.cells[4].text = str(item.get('库存', ''))
-                        new_row.cells[5].text = item.get('进度', '')
-                        new_row.cells[6].text = item.get('新增库存', '')
-                    st.write(f"✅ 已添加 {len(data['jisun_rows'])} 行机损数据")
+                    rows_to_remove.append(row)
                     break
-            if jisun_found:
-                break
-        if jisun_found:
+        for row in rows_to_remove:
+            tbl = row._element.getparent()
+            tbl.remove(row._element)
+            for item in data['jisun_rows']:
+                new_row = table.add_row()
+                if len(new_row.cells) >= 7:
+                    new_row.cells[0].text = str(item.get('库位', ''))
+                    new_row.cells[1].text = str(item.get('库位描述', ''))
+                    new_row.cells[2].text = str(item.get('物料代码', ''))
+                    new_row.cells[3].text = str(item.get('批次', ''))
+                    new_row.cells[4].text = str(item.get('库存', ''))
+                    new_row.cells[5].text = str(item.get('进度', ''))
+                    new_row.cells[6].text = str(item.get('新增库存', ''))
             break
-    if not jisun_found:
-        st.warning("❌ 未找到机损台账占位符 {{jisun_rows}}")
 
     # 处理主要问题分析表格
-    issues_found = False
     for table in doc.tables:
         for i, row in enumerate(table.rows):
             for cell in row.cells:
                 if '{{issues_table}}' in cell.text:
-                    st.write("✅ 找到主要问题占位符，准备替换")
-                    issues_found = True
                     tbl = row._element.getparent()
                     tbl.remove(row._element)
                     for issue in data['issues_rows']:
                         new_row = table.add_row()
-                        new_row.cells[0].text = issue['事项分类']
-                        new_row.cells[1].text = issue['所属问题类型']
-                        new_row.cells[2].text = issue['问题描述分析']
-                        new_row.cells[3].text = issue['解决措施']
-                    st.write(f"✅ 已添加 {len(data['issues_rows'])} 行问题数据")
+                        if len(new_row.cells) >= 4:
+                            new_row.cells[0].text = str(issue.get('事项分类', ''))
+                            new_row.cells[1].text = str(issue.get('所属问题类型', ''))
+                            new_row.cells[2].text = str(issue.get('问题描述分析', ''))
+                            new_row.cells[3].text = str(issue.get('解决措施', ''))
                     break
-            if issues_found:
-                break
-        if issues_found:
+            else:
+                continue
             break
-    if not issues_found:
-        st.warning("❌ 未找到主要问题占位符 {{issues_table}}")
 
-    # 下月工作计划：添加周日期和替换月份
+    # 下月工作计划
     year, month = current_date.year, current_date.month
     first_monday = get_current_month_first_monday(year, month)
     weeks = [(first_monday + timedelta(days=7*i), first_monday + timedelta(days=7*i+6)) for i in range(4)]
@@ -489,10 +486,8 @@ def update_word_document(template_bytes, data):
                 start, end = weeks[i]
                 date_range = f"（{start.strftime('%m月%d日')}-{end.strftime('%m月%d日')}）"
                 if date_range not in para.text:
-                    # 删除可能存在的旧日期范围
                     para.text = re.sub(r'（\d+月\d+日-\d+月\d+日）', '', para.text)
                     para.text = para.text.replace(week_name, f"{week_name}{date_range}")
-                    st.write(f"添加周日期: {week_name}{date_range}")
                 break
         if '将' in para.text and '月盘点表' in para.text:
             para.text = re.sub(r'将\d+月盘点表', f'将{data_month}月盘点表', para.text)
@@ -503,12 +498,21 @@ def update_word_document(template_bytes, data):
         if '为' in para.text and '月盘存做准备' in para.text:
             para.text = re.sub(r'为\d+月盘存做准备', f'为{next_month}月盘存做准备', para.text)
 
-    # 特殊处理：I030未清段落追加处理数量
+    # 特殊：整改措施中的数字追加（销售+预留总和）
+    i030_total_processed = data['i030_sale_processed'] + data['i030_reserve_processed']
+    ib00_total_processed = data['ib00_sale_processed'] + data['ib00_reserve_processed']
+
     for para in doc.paragraphs:
+        # 第一条整改措施：I030 总处理数量
         if '余下' in para.text and '单为异常订单暂不处理' in para.text:
-            if data['ib00_reserve_processed'] > 0:
-                para.text = para.text + f"，{data_month}月已处理{data['ib00_reserve_processed']}单"
-                st.write(f"追加处理数量: {data_month}月已处理{data['ib00_reserve_processed']}单")
+            if i030_total_processed > 0:
+                if f"{data_month}月已处理" not in para.text:
+                    para.text = para.text + f"，{data_month}月已处理{i030_total_processed}单"
+        # 第二条整改措施：IB00 总处理数量
+        if 'IB00工厂2025年之前的遗留预留订单未清项' in para.text and '月处理' in para.text:
+            new_text = re.sub(r'\d+月处理\d+单', f"{data_month}月处理{ib00_total_processed}单", para.text)
+            if new_text != para.text:
+                para.text = new_text
 
     output = BytesIO()
     doc.save(output)
