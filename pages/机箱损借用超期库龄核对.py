@@ -56,22 +56,33 @@ if stock_file and location_file:
     cols.insert(loc_idx + 1, loc_name_col_in_df)
     df_stock = df_stock[cols]
 
-    # 2. 新增“2月内库龄”
-    required = ["1月", "2月", "3月", "4月", "5月", "6月", "7-12月", "13-18月", "19-24月", "2-3年"]
+    # ========== 修改点1：required 增加“3年以上” ==========
+    required = ["1月", "2月", "3月", "4月", "5月", "6月", "7-12月", "13-18月", "19-24月", "2-3年", "3年以上"]
     for col in required:
         if col not in df_stock.columns:
             st.error(f"库龄表中缺少必需列：{col}")
             st.stop()
 
+    # 2. 新增“2月内库龄”
+    # 确保数值类型，填充空值
+    for col in ["1月", "2月"]:
+        df_stock[col] = pd.to_numeric(df_stock[col], errors='coerce').fillna(0)
     df_stock["2月内库龄"] = df_stock["1月"] + df_stock["2月"]
+
+    # 列排序（将“2月内库龄”插在“2月”后面）
     col_list = df_stock.columns.tolist()
     feb_idx = col_list.index("2月")
     new_col = col_list.pop(col_list.index("2月内库龄"))
     col_list.insert(feb_idx + 1, new_col)
     df_stock = df_stock[col_list]
 
+    # ========== 修改点2：upper_cols 增加“3年以上” ==========
+    upper_cols = ["3月", "4月", "5月", "6月", "7-12月", "13-18月", "19-24月", "2-3年", "3年以上"]
+    # 确保所有列都是数值，并填充0
+    for col in upper_cols:
+        if col in df_stock.columns:
+            df_stock[col] = pd.to_numeric(df_stock[col], errors='coerce').fillna(0)
     # 3. 新增“2月以上库龄”
-    upper_cols = ["3月", "4月", "5月", "6月", "7-12月", "13-18月", "19-24月", "2-3年"]
     df_stock["2月以上库龄"] = df_stock[upper_cols].sum(axis=1)
 
     with st.expander("📌 处理后的完整库龄表（前10行）"):
