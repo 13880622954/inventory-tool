@@ -257,13 +257,21 @@ def load_excel_data(excel_file):
     data['wms_dan'] = wms_dan
     data['wms_quantity'] = f"{wms_tai}台、{wms_dan}单"
 
-    # 纸质盘点表总结
+    # ================== 纸质盘点表总结（修正动态月份） ==================
     if '纸质盘点表及扫描件回传' in wb.sheetnames:
         df_paper = pd.read_excel(excel_file, sheet_name='纸质盘点表及扫描件回传')
         total = len(df_paper)
-        paper_rec = df_paper[df_paper['4月'] == '已回'].shape[0]
+
+        # 动态获取月份列名：如 "5月"、"6月" 等
+        month_col = f"{data['data_month']}月"
+        # 如果列名不存在，自动查找含“月”的列（兼容命名差异）
+        if month_col not in df_paper.columns:
+            candidates = [col for col in df_paper.columns if '月' in str(col)]
+            month_col = candidates[0] if candidates else '4月'  # 兜底
+
+        paper_rec = df_paper[df_paper[month_col] == '已回'].shape[0]
         scan_rec = df_paper[df_paper['扫描件回收情况'] == '已回'].shape[0]
-        missing_paper = df_paper[df_paper['4月'] != '已回']['地区（美菱）'].tolist()
+        missing_paper = df_paper[df_paper[month_col] != '已回']['地区（美菱）'].tolist()
         missing_scan = df_paper[df_paper['扫描件回收情况'] != '已回']['地区（美菱）'].tolist()
         anomalies = []
         for _, row in df_paper.iterrows():
