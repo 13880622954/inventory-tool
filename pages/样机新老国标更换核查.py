@@ -26,33 +26,21 @@ def extract_mls(text):
 
 def extract_barcodes(text):
     if not text: return []
-    parts = re.split(r'(?=(?:JC|HC[A-Z]))', text)
-    bcs = []
-    for p in parts:
-        match = re.match(r'((?:JC|HC[A-Z])[A-Z0-9]{10,})', p)
-        if match:
-            bcs.append(match.group(1))
-    return bcs
+    matches = re.findall(r'(?:JC|HC[0-9A-Z])[0-9A-Z]{15,30}', text)
+    cleaned_bcs = []
+    for m in matches:
+        if "ML" in m:
+            m = m.split("ML")[0]
+        # 严格限制长度，过滤掉拼接产生的幻觉长串
+        if 20 <= len(m) <= 26:
+            cleaned_bcs.append(m)
+    return cleaned_bcs
 
 def extract_number_from_text(text, default=1):
     text = clean_text(text)
     match = re.search(r'(?:甲等品|乙等品|丙等品)(\d+)', text)
     if match: return int(match.group(1))
     return default
-
-def extract_excel_qty(row, df_columns, is_loss):
-    # 根据模糊列名去取数量
-    target_keywords = ["盘亏", "数量"] if is_loss else ["盘盈", "数量"]
-    for kw in target_keywords:
-        for col in df_columns:
-            if kw in str(col):
-                val = row.get(col)
-                if pd.notna(val) and str(val).strip() != "":
-                    try:
-                        v = float(val)
-                        if v > 0: return int(v)
-                    except: pass
-    return 1
 
 def iter_block_items(parent):
     if isinstance(parent, _Document): parent_elm = parent.element.body
@@ -67,16 +55,13 @@ def build_dict(data):
     for k, v in data: d[k] += v
     return d
 
-# 【核心修复】处理条码字符串：每24位换行，多个条码之间也换行
 def format_barcode_cell(bc_list):
     valid_bcs = [b for b in bc_list if b]
     if not valid_bcs: return ""
-    
     formatted_bcs = []
     for bc in valid_bcs:
         chunks = [bc[i:i+24] for i in range(0, len(bc), 24)]
         formatted_bcs.append("\n".join(chunks))
-        
     return "\n".join(formatted_bcs)
 
 # ================= OCR 模块 =================
@@ -97,11 +82,14 @@ with col3:
 if docx_file or excel_file:
     # ---------------- 1. 解析 Word ----------------
     w_p3_old, w_p3_new = [], []
-    w_p3_bcs_all = [] 
     w_p4_in, w_p4_out = [], []
     w_p5_loss, w_p5_gain = [], []
     current_context = ""
     
+    w_bc_dict = {}       # 记录属于新国标的正确条码
+    w_orphan_dict = {}   # 记录在当前行提取到，但数字对不上的孤儿条码
+    bc_metadata = {}     # 记录所有条码的归属信息
+
     if docx_file:
         doc = Document(docx_file)
         seen_tables = set()
@@ -141,22 +129,42 @@ if docx_file or excel_file:
                             w_p5_loss.append((mls[0], qty)); w_p5_gain.append((mls[1], qty))
                     elif "老国标" in header_clean and "新国标" in header_clean:
                         if len(mls) >= 2:
-                            w_p3_old.append((mls[0], qty)); w_p3_new.append((mls[1], qty))
+                            old_ml = mls[0]
+                            new_ml = mls[1]
+                            old_num = re.sub(r'[^\d]', '', old_ml)
+                            new_num = re.sub(r'[^\d]', '', new_ml)
+                            
+                            w_p3_old.append((old_ml, qty)); w_p3_new.append((new_ml, qty))
+                            
                             bcs = extract_barcodes(row_text)
-                            w_p3_bcs_all.extend(bcs)
+                            new_valid_bcs = []
+                            orphans = []
+                            
+                            for bc in bcs:
+                                if len(bc) >= 10:
+                                    bc_num = bc[3:10]
+                                    if bc_num == new_num:
+                                        new_valid_bcs.append(bc)
+                                        bc_metadata.setdefault(bc, []).append(f"新国标({new_ml})")
+                                    elif bc_num == old_num:
+                                        bc_metadata.setdefault(bc, []).append(f"老国标({old_ml})")
+                                    else:
+                                        orphans.append(bc)
+                                        bc_metadata.setdefault(bc, []).append(f"未知物料(无法匹配)")
+                                        
+                            if new_ml not in w_bc_dict: w_bc_dict[new_ml] = []
+                            w_bc_dict[new_ml].extend(new_valid_bcs)
+                            
+                            if orphans:
+                                if new_ml not in w_orphan_dict: w_orphan_dict[new_ml] = []
+                                w_orphan_dict[new_ml].extend(orphans)
+                                
                     elif len(mls) == 1:
                         if current_context == "取回": w_p4_in.append((mls[0], qty))
                         elif current_context == "发出": w_p4_out.append((mls[0], qty))
                         else:
                             if "盘亏" in row_text: w_p4_in.append((mls[0], qty))
                             elif "盘盈" in row_text: w_p4_out.append((mls[0], qty))
-
-    w_bc_dict = {}
-    for ml, qty in w_p3_new:
-        ml_num = re.sub(r'[^\d]', '', ml)
-        valid_bcs = {bc for bc in w_p3_bcs_all if len(bc) >= 10 and bc[3:10] == ml_num}
-        if ml not in w_bc_dict: w_bc_dict[ml] = set()
-        w_bc_dict[ml].update(valid_bcs)
 
     # ---------------- 2. 解析 Excel ----------------
     ex_loss, ex_gain, ex_barcode = [], [], []
@@ -167,48 +175,44 @@ if docx_file or excel_file:
     if excel_file:
         xls = pd.ExcelFile(io.BytesIO(excel_file.getvalue()))
         df_raw = pd.read_excel(xls, sheet_name=0).fillna("")
+        df_raw.columns = [re.sub(r'\s+', '', str(c)) for c in df_raw.columns]
         
-        # 【核心修复】去除列名可能带的不可见字符，并模糊锁定核心列名
-        df_raw.columns = [re.sub(r'\s+', '', str(c)).replace('　', '') for c in df_raw.columns]
-        
-        c_code = next((c for c in df_raw.columns if "物料" in c and "代码" in c), "物料代码")
-        c_panyi = next((c for c in df_raw.columns if "盘盈" in c), "盘盈数量")
-        c_pankui = next((c for c in df_raw.columns if "盘亏" in c), "盘亏数量")
-        c_adj = next((c for c in df_raw.columns if "调整明细" in c), "调整明细")
-        c_bc = next((c for c in df_raw.columns if "机号" in c or "条码" in c or "序列" in c), "机号码")
-        c_op = next((c for c in df_raw.columns if "操作" in c), "操作")
-
         for idx, row in df_raw.iterrows():
             code = ""
-            if c_code in df_raw.columns: code = clean_text(row.get(c_code, ""))
-            else:
-                # 兜底，找行里包含 ML 的
-                for v in row.values:
-                    if "ML" in str(v).upper():
-                        code = clean_text(v)
-                        break
-            
+            for col in df_raw.columns:
+                if "物料" in str(col) and "代码" in str(col):
+                    code = clean_text(row.get(col, ""))
+                    if code: break
             if not code or "ML" not in code: continue
             
             is_loss, is_gain = False, False
-            if c_pankui in df_raw.columns and str(row.get(c_pankui, "")) not in ["", "0", "0.0"]: is_loss = True
-            if c_panyi in df_raw.columns and str(row.get(c_panyi, "")) not in ["", "0", "0.0"]: is_gain = True
-            
-            if c_adj in df_raw.columns:
-                adj_str = str(row.get(c_adj, ""))
-                if adj_str.startswith("-"): is_loss = True
-                elif adj_str not in ["", "0", "0.0"]: is_gain = True
+            qty = 1
+            for col in df_raw.columns:
+                col_str = str(col)
+                val = str(row.get(col, "")).strip()
+                if val in ["", "0", "0.0", "nan"]: continue
                 
-            if c_op in df_raw.columns:
-                if "盘亏" in str(row.get(c_op, "")): is_loss = True
-                if "盘盈" in str(row.get(c_op, "")): is_gain = True
-
+                if "盘亏" in col_str:
+                    is_loss = True
+                    try: qty = int(float(val))
+                    except: pass
+                elif "盘盈" in col_str:
+                    is_gain = True
+                    try: qty = int(float(val))
+                    except: pass
+            
+            for col in df_raw.columns:
+                if "调整明细" in str(col):
+                    val = str(row.get(col, "")).strip()
+                    if val.startswith("-"): is_loss = True; qty = abs(int(float(val)))
+                    elif val not in ["", "0", "0.0", "nan"]: is_gain = True; qty = abs(int(float(val)))
+                    
             bc = ""
-            if c_bc in df_raw.columns:
-                bc_val = clean_text(row.get(c_bc, ""))
-                if bc_val: bc = bc_val
-
-            qty = extract_excel_qty(row, df_raw.columns, is_loss)
+            for col in df_raw.columns:
+                if any(kw in str(col) for kw in ["条码", "机号码", "机器序列号"]):
+                    bc_val = clean_text(row.get(col, ""))
+                    if bc_val: bc = bc_val; break
+                    
             parsed_ex_data[idx] = {"is_loss": is_loss, "is_gain": is_gain, "barcode": bc, "qty": qty}
             
             if is_loss: ex_loss.append((code, qty))
@@ -218,23 +222,6 @@ if docx_file or excel_file:
                     ex_barcode.append((code, bc))
                     if code not in ex_bc_dict: ex_bc_dict[code] = set()
                     ex_bc_dict[code].add(bc)
-
-        if not ex_barcode and len(xls.sheet_names) > 1:
-            df2 = pd.read_excel(xls, sheet_name=1, header=None).fillna("")
-            for _, row in df2.iterrows():
-                row_vals = [clean_text(v) for v in row.values]
-                for i, val in enumerate(row_vals):
-                    if val.startswith("ML") and len(val) == 9:
-                        code = val
-                        bc = ""
-                        for j in range(i+1, len(row_vals)):
-                            if re.match(r'(?:JC|HC[A-Z])[A-Z0-9]{10,}', row_vals[j]):
-                                bc = row_vals[j]
-                                break
-                        if code and bc:
-                            ex_barcode.append((code, bc))
-                            if code not in ex_bc_dict: ex_bc_dict[code] = set()
-                            ex_bc_dict[code].add(bc)
 
     # ---------------- 3. 解析 图片 ----------------
     img_loss = []
@@ -248,7 +235,6 @@ if docx_file or excel_file:
                 box, text = item[0], item[1]
                 cy = (box[0][1] + box[2][1]) / 2
                 words.append({'cy': cy, 'text': text})
-                
             words.sort(key=lambda x: x['cy'])
             lines = []
             for w in words:
@@ -260,14 +246,12 @@ if docx_file or excel_file:
                         break
                 if not placed:
                     lines.append({'cy': w['cy'], 'text': w['text']})
-            
             for l in lines:
                 line_text = clean_text(l['text'])
                 mls = extract_mls(line_text)
                 if mls:
                     qty = extract_number_from_text(line_text)
-                    for m in mls:
-                        img_loss.append((m, qty))
+                    for m in mls: img_loss.append((m, qty))
 
     # ---------------- 汇总数据 ----------------
     d_w_p3_old, d_w_p4_in, d_w_p5_loss = build_dict(w_p3_old), build_dict(w_p4_in), build_dict(w_p5_loss)
@@ -280,17 +264,32 @@ if docx_file or excel_file:
     
     with tab1:
         st.subheader("Word 内部：新国标物料号 VS 机身码 (集合校验)")
+        
         err_cnt = 0
         for ml, qty in d_w_p3_new.items():
             ml_num = re.sub(r'[^\d]', '', ml)
-            w_bcs = w_bc_dict.get(ml, set())
-            valid_bcs = {bc for bc in w_bcs if len(bc) >= 10 and bc[3:10] == ml_num}
+            w_bcs = w_bc_dict.get(ml, [])
             
-            if len(valid_bcs) == qty:
-                st.success(f"✅ 一致：物料 `{ml}` (总数:{qty}) ↔ 匹配到 {len(valid_bcs)} 个正确条码")
+            bc_counts = Counter(w_bcs)
+            dup_bcs = [bc for bc, count in bc_counts.items() if count > 1]
+            unique_valid_bcs = list(bc_counts.keys())
+            
+            orphans_for_ml = w_orphan_dict.get(ml, [])
+            
+            # 核心修复：只要数量对得上，且没有重复的条码，直接放行，无需理会排版产生的幻觉孤儿条码
+            if len(w_bcs) == qty and not dup_bcs:
+                st.success(f"✅ 一致：物料 `{ml}` (总数:{qty}) ↔ 匹配到 {len(unique_valid_bcs)} 个正确且唯一的条码")
             else:
                 err_cnt += 1
-                st.error(f"❌ 数量与条码不匹配：物料 `{ml}` 总数为 {qty}，但只匹配到了 {len(valid_bcs)} 个对应条码。")
+                error_msg = f"❌ 数量与条码不匹配：物料 `{ml}` 总数为 {qty}，有效且唯一的条码为 {len(unique_valid_bcs)} 个。\n\n"
+                
+                if dup_bcs:
+                    error_msg += f"👉 检测到条码**重复**：`{', '.join(dup_bcs)}`\n"
+                
+                if orphans_for_ml:
+                    error_msg += f"👉 检测到条码**无法匹配**（可能录错/排版错乱）：`{', '.join(orphans_for_ml)}`\n"
+                    
+                st.error(error_msg)
                 
         if err_cnt == 0 and d_w_p3_new: st.balloons()
 
@@ -332,15 +331,19 @@ if docx_file or excel_file:
         st.divider()
         st.subheader("条码唯一性核查 (防重复)")
         
-        all_w_bcs = [bc for bc_set in w_bc_dict.values() for bc in bc_set if bc]
-        w_bc_counts = Counter(all_w_bcs)
+        # 遍历全量元数据，揪出重复并展示归属
+        w_bc_counts = Counter()
+        for bc, identities in bc_metadata.items():
+            w_bc_counts[bc] = len(identities)
+            
         ex_bc_counts = Counter([b for _, b in ex_barcode if b])
         
         dup_err = False
         for bc, count in w_bc_counts.items():
             if count > 1:
                 dup_err = True
-                st.error(f"❌ [Word 内部] 发现重复条码：`{bc}` (出现了 {count} 次)")
+                identities = " ; ".join(bc_metadata[bc])
+                st.error(f"❌ [Word 内部] 发现重复条码：`{bc}` (出现了 {count} 次)。\n🏷️ **归属**：{identities}")
         for bc, count in ex_bc_counts.items():
             if count > 1:
                 dup_err = True
@@ -351,21 +354,20 @@ if docx_file or excel_file:
         st.subheader("Word VS Excel 条码集合核对")
         if excel_file:
             bc_err = 0
-            all_mls = set(w_bc_dict.keys()) | set(ex_bc_dict.keys())
+            w_bc_set_dict = {k: set(v) for k, v in w_bc_dict.items()}
+            all_mls = set(w_bc_set_dict.keys()) | set(ex_bc_dict.keys())
+            
             for ml in all_mls:
-                w_bcs = w_bc_dict.get(ml, set())
+                w_bcs = w_bc_set_dict.get(ml, set())
                 ex_bcs = ex_bc_dict.get(ml, set())
-                
                 missing_in_ex = w_bcs - ex_bcs
                 missing_in_w = ex_bcs - w_bcs
-                
                 if missing_in_ex:
                     bc_err += 1
                     st.error(f"❌ 物料 `{ml}`：在 Word 中有条码 `{', '.join(missing_in_ex)}`，但在 Excel 中缺失！")
                 if missing_in_w:
                     bc_err += 1
                     st.error(f"❌ 物料 `{ml}`：在 Excel 中有条码 `{', '.join(missing_in_w)}`，但在 Word 中缺失！")
-                    
             if bc_err == 0: 
                 st.success("✅ 完美！Word 和 Excel 中的条码完全一一对应，无一遗漏/多余。")
                 st.balloons()
@@ -393,7 +395,11 @@ if docx_file or excel_file:
     if df_raw is not None:
         rows = []
         for idx, row in df_raw.iterrows():
-            code = clean_text(row.get(c_code, ""))
+            code = ""
+            for col in df_raw.columns:
+                if "物料" in str(col) and "代码" in str(col):
+                    code = clean_text(row.get(col, ""))
+                    if code: break
             if not code or "ML" not in code: continue
             
             info = parsed_ex_data[idx]
@@ -401,29 +407,23 @@ if docx_file or excel_file:
             if not is_loss and not is_gain: continue
             
             qty = info["qty"]
-
             op = "盘亏" if is_loss else "盘盈"
             adj = str(-qty) if is_loss else str(qty)
             inv = qty if is_loss else 0
             
-            loc_code = ""
-            if "库位" in df_raw.columns:
-                loc_code = str(row.get("库位", "")).strip().upper()
+            loc_code = str(row.get("库位", "")).strip().upper()
             loc_desc = loc_map.get(loc_code, "")
             
             date_val = row.get("日期", "")
-            if pd.isna(date_val) or not str(date_val).strip():
-                date_val = today_str
-            else:
-                date_val = str(date_val).split(" ")[0]
+            if pd.isna(date_val) or not str(date_val).strip(): date_val = today_str
+            else: date_val = str(date_val).split(" ")[0]
 
             sn = row.get("涉及单号", "")
             if pd.isna(sn): sn = ""
             else: sn = str(sn).split(".")[0]
 
             loc_desc_val = row.get("库位描述", "")
-            if pd.isna(loc_desc_val) or not str(loc_desc_val).strip():
-                loc_desc_val = loc_desc
+            if pd.isna(loc_desc_val) or not str(loc_desc_val).strip(): loc_desc_val = loc_desc
 
             inv_sys = row.get("条码系统库存", "")
             inv_r3 = row.get("R3库存", "")
@@ -433,54 +433,39 @@ if docx_file or excel_file:
             grade = row.get("等级", "")
             if pd.isna(grade) or not str(grade).strip(): grade = "甲等品"
 
-            adj_val = row.get(c_adj, "")
+            adj_val = row.get("调整明细（条码系统）", "")
             if pd.isna(adj_val) or str(adj_val).strip() == "": adj_val = adj
 
             status = row.get("处理情况", "")
             if pd.isna(status): status = ""
 
-            op_val = row.get(c_op, "")
+            op_val = row.get("操作", "")
             if pd.isna(op_val) or not str(op_val).strip(): op_val = op
 
             bc = info.get("barcode", "")
             if not bc:
-                bc = row.get(c_bc, "")
+                bc = row.get("条码", "")
                 if pd.isna(bc): bc = ""
                 bc = str(bc).strip()
                 if not bc:
                     for c, b in ex_barcode:
-                        if c == code:
-                            bc = b
-                            break
+                        if c == code: bc = b; break
 
             rows.append({
-                "日期": date_val,
-                "库位": loc_code,
-                "库位描述": loc_desc_val,
-                "涉及单号": sn,
-                "物料代码": code,
-                "条码系统库存": inv_sys,
-                "R3库存": inv_r3,
-                "等级": grade,
-                "调整明细（条码系统）": adj_val,
-                "处理情况": status,
-                "操作": op_val,
-                "条码": bc
+                "日期": date_val, "库位": loc_code, "库位描述": loc_desc_val, "涉及单号": sn,
+                "物料代码": code, "条码系统库存": inv_sys, "R3库存": inv_r3, "等级": grade,
+                "调整明细（条码系统）": adj_val, "处理情况": status, "操作": op_val, "条码": bc
             })
         
         out_df = pd.DataFrame(rows)
         if not out_df.empty:
             group_cols = ["日期", "库位", "库位描述", "涉及单号", "物料代码", "等级", "操作"]
-            
             for c in ["条码系统库存", "R3库存", "调整明细（条码系统）"]:
                 out_df[c] = pd.to_numeric(out_df[c], errors='coerce').fillna(0).astype(int)
-                
             out_df["条码"] = out_df["条码"].astype(str).replace('nan', '')
 
             out_df = out_df.groupby(group_cols, as_index=False).agg({
-                "条码系统库存": "sum",
-                "R3库存": "sum",
-                "调整明细（条码系统）": "sum",
+                "条码系统库存": "sum", "R3库存": "sum", "调整明细（条码系统）": "sum",
                 "处理情况": "first",
                 "条码": format_barcode_cell
             })
@@ -488,35 +473,34 @@ if docx_file or excel_file:
             out_df["sort"] = out_df["操作"].apply(lambda x: 0 if x == "盘亏" else 1)
             out_df = out_df.sort_values(by="sort").drop(columns=["sort"]).reset_index(drop=True)
 
-            non_empty_barcodes = out_df[out_df["条码"] != ""]["条码"]
-            if non_empty_barcodes.duplicated().any():
-                st.error("⚠️ 警告：合并后的表格中仍存在重复的条码组合，请检查上方日志！")
-
             out_buf = io.BytesIO()
             with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
                 out_df.to_excel(writer, index=False, sheet_name='核查结果')
-                
                 worksheet = writer.sheets['核查结果']
+                
+                barcode_idx = 0
+                for i, col in enumerate(out_df.columns, 1):
+                    if col == "条码":
+                        barcode_idx = i
+                        break
+                        
                 for row in worksheet.iter_rows():
                     for cell in row:
-                        if cell.column_letter == 'L' or cell.value == "条码": 
+                        if cell.column == barcode_idx:
                             cell.alignment = Alignment(wrap_text=True, vertical='top')
                         else:
                             cell.alignment = Alignment(wrap_text=False, vertical='top')
             
             out_buf.seek(0)
-            
             st.download_button(
                 label="点击下载标准化汇总 Excel 表格",
-                data=out_buf,
-                file_name="调账明细汇总核查结果.xlsx",
+                data=out_buf, file_name="调账明细汇总核查结果.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             st.dataframe(out_df.head(15))
         else:
             st.warning("未解析到有效的盘盈或盘亏数据，无法导出。")
 
-    # ================= 调试数据面板 =================
     with st.expander("🛠 查看所有提取的原始数据"):
         c1, c2 = st.columns(2)
         with c1:
@@ -530,7 +514,7 @@ if docx_file or excel_file:
         st.write("**【Excel】盘亏:**", ex_loss)
         st.write("**【Excel】盘盈:**", ex_gain)
         st.write("**【Excel】条码:**", ex_barcode)
-        st.write("**【图片】OCR盘亏(含数量):**", img_loss)
+        st.write("**【图片】OCR盘亏:**", img_loss)
 
 else:
     st.info("👈 请先上传 Word 调账单 或 Excel 对比表进行联查。")
